@@ -1,26 +1,199 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafb;
+  --foreground: #092f46;
+  --pool-depth: #0a3d5c;
+  --pool-bright: #00b4d8;
+  --pool-foam: #f8fafb;
+  --pool-action: #ff6b35;
+  --pool-ink: #05283d;
+  --pool-line: rgba(10, 61, 92, 0.14);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-syne);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+html.dark-mode,
+body.dark-mode {
+  color-scheme: dark;
+}
+
+html.dark-mode body,
+body.dark-mode {
+  background: #061725;
+  color: #eef8fb;
+}
+
+html.dark-mode main,
+html.dark-mode header,
+html.dark-mode section,
+html.dark-mode aside,
+body.dark-mode main,
+body.dark-mode header,
+body.dark-mode section,
+body.dark-mode aside {
+  background-color: #061725 !important;
+  color: #eef8fb !important;
+}
+
+html.dark-mode .bg-white,
+html.dark-mode [class*="bg-[#F8FAFB]"],
+html.dark-mode [class*="bg-[#EAF8FC]"],
+html.dark-mode [class*="bg-[#EDFFF5]"],
+html.dark-mode [class*="bg-[#FFF4EF]"],
+body.dark-mode .bg-white,
+body.dark-mode [class*="bg-[#F8FAFB]"],
+body.dark-mode [class*="bg-[#EAF8FC]"],
+body.dark-mode [class*="bg-[#EDFFF5]"],
+body.dark-mode [class*="bg-[#FFF4EF]"] {
+  background-color: #0b2233 !important;
+}
+
+html.dark-mode [class*="text-[#062A3E]"],
+html.dark-mode [class*="text-[#0A3D5C]"],
+html.dark-mode [class*="text-[#36586C]"],
+body.dark-mode [class*="text-[#062A3E]"],
+body.dark-mode [class*="text-[#0A3D5C]"],
+body.dark-mode [class*="text-[#36586C]"] {
+  color: #eef8fb !important;
+}
+
+html.dark-mode [class*="text-[#617789]"],
+html.dark-mode [class*="text-[#8A9AA6]"],
+body.dark-mode [class*="text-[#617789]"],
+body.dark-mode [class*="text-[#8A9AA6]"] {
+  color: #b8d2df !important;
+}
+
+html.dark-mode [class*="border-[#0A3D5C]"],
+body.dark-mode [class*="border-[#0A3D5C]"] {
+  border-color: rgba(159, 213, 232, 0.22) !important;
+}
+
+html.dark-mode input,
+html.dark-mode select,
+html.dark-mode textarea,
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea {
+  color: #eef8fb;
+}
+
+html.dark-mode .pool-depth,
+body.dark-mode .pool-depth {
+  background:
+    radial-gradient(circle at 20% 12%, rgba(0, 180, 216, 0.22), transparent 28%),
+    radial-gradient(circle at 88% 18%, rgba(255, 107, 53, 0.12), transparent 24%),
+    linear-gradient(135deg, #03131f 0%, #061725 52%, #0a3d5c 100%);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.font-display {
+  font-family: var(--font-syne), var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+.pool-depth {
+  background:
+    radial-gradient(circle at 20% 12%, rgba(0, 180, 216, 0.34), transparent 28%),
+    radial-gradient(circle at 88% 18%, rgba(255, 107, 53, 0.2), transparent 24%),
+    linear-gradient(135deg, #05283d 0%, #0a3d5c 48%, #0077a2 100%);
+}
+
+.water-particles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.water-particles span {
+  position: absolute;
+  bottom: -20px;
+  width: var(--size);
+  height: var(--size);
+  left: var(--left);
+  border-radius: 999px;
+  background: rgba(248, 250, 251, 0.58);
+  box-shadow: 0 0 22px rgba(0, 180, 216, 0.42);
+  animation: water-rise var(--duration) linear infinite;
+  animation-delay: var(--delay);
+}
+
+.water-grid {
+  background-image:
+    linear-gradient(rgba(248, 250, 251, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(248, 250, 251, 0.08) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+@keyframes water-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.72);
+  }
+
+  14% {
+    opacity: 0.75;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(18px, -520px, 0) scale(1.18);
+  }
+}
+
+@media print {
+  header,
+  footer,
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: #062a3e !important;
+  }
+
+  main,
+  section,
+  div {
+    box-shadow: none !important;
+  }
+
+  .print-surface {
+    position: static !important;
+    inset: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: white !important;
+    color: #062a3e !important;
+  }
+
+  .print-card {
+    border: 1px solid #d7e2e8 !important;
+    background: white !important;
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 14mm;
+  }
 }

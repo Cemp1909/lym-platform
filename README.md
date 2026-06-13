@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Distribuciones LYM Platform
 
-## Getting Started
+Plataforma demo para venta de productos de piscina, gestión administrativa, cotizaciones, remisiones y flujo visual de pago Wompi.
 
-First, run the development server:
+## Enlaces locales
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Tienda: http://127.0.0.1:3002/
+- Ofertas: http://127.0.0.1:3002/ofertas
+- Estado del pedido: http://127.0.0.1:3002/estado-pedido
+- Nosotros: http://127.0.0.1:3002/nosotros
+- Servicios: http://127.0.0.1:3002/servicios
+- Contacto: http://127.0.0.1:3002/contacto
+- Politicas: http://127.0.0.1:3002/politicas
+- Admin: http://127.0.0.1:3002/admin
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Admin demo
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Clave visual: `admin`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Esta clave no es seguridad real. Antes de producción debe conectarse con Supabase Auth o un sistema equivalente.
 
-## Learn More
+## Flujo comprador
 
-To learn more about Next.js, take a look at the following resources:
+- Explorar catálogo.
+- Filtrar por categoría, disponibilidad, favoritos o productos por cotizar.
+- Ver detalle del producto.
+- Agregar al carrito.
+- Solicitar cotización por WhatsApp o continuar al demo de Wompi.
+- Crear cuenta antes de pagar.
+- Consultar estado del pedido.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Flujo administrador
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Entrar al panel admin.
+- Editar productos, fotos, stock y precio.
+- Crear ofertas.
+- Gestionar pedidos.
+- Asignar domicilios.
+- Generar remisiones.
+- Exportar inventario CSV.
+- Restaurar datos demo.
 
-## Deploy on Vercel
+## Pendiente para producción
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Base de datos de productos, clientes, pedidos, favoritos y ofertas.
+- Subida real de imágenes a Storage.
+- Autenticación real para clientes y administradores.
+- Integración real con Wompi.
+- Notificaciones WhatsApp/API.
+- Reglas de seguridad y permisos por rol.
