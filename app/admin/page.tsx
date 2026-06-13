@@ -14,7 +14,6 @@ import {
   FileText,
   Home,
   ImagePlus,
-  KeyRound,
   LayoutDashboard,
   MapPin,
   MessageCircle,
@@ -31,6 +30,12 @@ import {
   X,
 } from "lucide-react";
 import { products as seedProducts, type Product } from "../products";
+import {
+  sanitizeImagePath,
+  sanitizeLongText,
+  sanitizeMoneyLike,
+  sanitizeText,
+} from "../security/sanitize";
 import { ThemeToggle } from "../theme-toggle";
 
 type AdminProduct = Product & {
@@ -103,6 +108,20 @@ const productStatuses = [
   "Oferta activa",
   "Depurar",
 ];
+
+const availabilityOptions = [
+  ["Disponible para confirmar", 2],
+  ["Consultar disponibilidad", 1],
+  ["Bajo pedido", 0],
+  ["Agotado temporalmente", -1],
+] as const;
+
+function availabilityFromStock(stock: number) {
+  if (stock < 0) return "Agotado temporalmente";
+  if (stock === 0) return "Bajo pedido";
+  if (stock === 1) return "Consultar disponibilidad";
+  return "Disponible para confirmar";
+}
 
 const initialOrders: Order[] = [
   {
@@ -257,6 +276,25 @@ function parseCsvLine(line: string) {
   return cells;
 }
 
+function sanitizeAdminProduct(product: AdminProduct): AdminProduct {
+  const category = sanitizeText(product.category, { maxLength: 80 }) || "Productos";
+  const commerceStatus = productStatuses.includes(product.commerceStatus)
+    ? product.commerceStatus
+    : "Pendiente de precio";
+
+  return {
+    ...product,
+    name: sanitizeText(product.name, { maxLength: 140 }) || "Producto sin nombre",
+    category,
+    tag: sanitizeText(product.tag, { maxLength: 80 }) || category,
+    adminPrice: product.adminPrice.replace(/[^\d]/g, "").slice(0, 12),
+    unit: sanitizeText(product.unit, { maxLength: 80 }) || "Precio por definir",
+    image: sanitizeImagePath(product.image),
+    commerceStatus,
+    active: commerceStatus !== "Oculto",
+  };
+}
+
 function ProductThumb({ src, name }: { src: string; name: string }) {
   return (
     <div className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-[#0A3D5C]/10 bg-white">
@@ -267,8 +305,6 @@ function ProductThumb({ src, name }: { src: string; name: string }) {
 
 export default function AdminPage() {
   const [section, setSection] = useState("Resumen");
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [adminPass, setAdminPass] = useState("");
   const [presentationMode, setPresentationMode] = useState(false);
   const [query, setQuery] = useState("");
   const [adminProducts, setAdminProducts] = useState<AdminProduct[]>(
@@ -317,12 +353,14 @@ export default function AdminPage() {
   ]);
 
   const visibleProducts = useMemo(() => {
+    const cleanQuery = sanitizeText(query, { maxLength: 80 }).toLowerCase();
+
     return adminProducts.filter((product) =>
-      product.name.toLowerCase().includes(query.trim().toLowerCase()),
+      product.name.toLowerCase().includes(cleanQuery),
     );
   }, [adminProducts, query]);
   const offerProductMatches = useMemo(() => {
-    const search = offerDraft.target.trim().toLowerCase();
+    const search = sanitizeText(offerDraft.target, { maxLength: 100 }).toLowerCase();
 
     if (!search) return adminProducts.slice(0, 6);
 
@@ -468,7 +506,7 @@ export default function AdminPage() {
 
   function saveProduct() {
     if (!editingProduct) return;
-    const normalizedProduct = {
+    const normalizedProduct = sanitizeAdminProduct({
       ...editingProduct,
       commerceStatus:
         editingProduct.commerceStatus === "Pendiente de precio" &&
@@ -476,7 +514,7 @@ export default function AdminPage() {
           ? "Publicado"
           : editingProduct.commerceStatus,
       active: editingProduct.commerceStatus !== "Oculto",
-    };
+    });
 
     setAdminProducts((current) => {
       const exists = current.some((product) => product.id === normalizedProduct.id);
@@ -495,13 +533,13 @@ export default function AdminPage() {
 
   function exportInventoryCsv() {
     const rows = [
-      ["ID", "Producto", "Categoria", "Precio", "Stock", "Estado", "Imagen", "Observaciones"],
+      ["ID", "Producto", "Categoria", "Precio", "Disponibilidad", "Estado", "Imagen", "Observaciones"],
       ...adminProducts.map((product) => [
         product.id.toString(),
         product.name,
         product.category,
         product.adminPrice,
-        product.stock.toString(),
+        availabilityFromStock(product.stock),
         product.commerceStatus,
         product.image,
         "",
@@ -548,17 +586,25 @@ export default function AdminPage() {
           if (!row) return product;
 
           updated += 1;
-          const [, , category, price, stock, status, image] = row;
+          const [, , category, price, availability, status, image] = row;
+          const availabilityMatch = availabilityOptions.find(
+            ([label]) => label.toLowerCase() === availability?.toLowerCase(),
+          );
+          const cleanStatus = productStatuses.includes(status)
+            ? status
+            : product.commerceStatus;
+          const cleanCategory =
+            sanitizeText(category || "", { maxLength: 80 }) || product.category;
 
           return {
             ...product,
-            category: category || product.category,
-            tag: category || product.tag,
-            adminPrice: price?.replace(/[^\d]/g, "") || product.adminPrice,
-            stock: Number(stock) || product.stock,
-            commerceStatus: status || product.commerceStatus,
-            active: (status || product.commerceStatus) !== "Oculto",
-            image: image || product.image,
+            category: cleanCategory,
+            tag: cleanCategory || product.tag,
+            adminPrice: price?.replace(/[^\d]/g, "").slice(0, 12) || product.adminPrice,
+            stock: availabilityMatch?.[1] ?? product.stock,
+            commerceStatus: cleanStatus,
+            active: cleanStatus !== "Oculto",
+            image: image ? sanitizeImagePath(image) : product.image,
           };
         }),
       );
@@ -636,19 +682,27 @@ export default function AdminPage() {
 
   function saveDeliveryAssignment() {
     if (!deliveryOrder) return;
+    const cleanDeliveryDraft = {
+      ...deliveryDraft,
+      address: sanitizeText(deliveryDraft.address, { maxLength: 180 }),
+      cost: sanitizeMoneyLike(deliveryDraft.cost),
+      courier: sanitizeText(deliveryDraft.courier, { maxLength: 80 }),
+      window: sanitizeText(deliveryDraft.window, { maxLength: 80 }),
+      notes: sanitizeLongText(deliveryDraft.notes, 300),
+    };
 
     setOrders((current) =>
       current.map((order) =>
         order.id === deliveryOrder.id
           ? {
               ...order,
-              delivery: deliveryDraft.zone,
-              address: deliveryDraft.address,
+              delivery: cleanDeliveryDraft.zone,
+              address: cleanDeliveryDraft.address,
               status: "En domicilio",
-              courier: deliveryDraft.courier,
-              deliveryCost: deliveryDraft.cost,
-              deliveryWindow: deliveryDraft.window,
-              deliveryNotes: deliveryDraft.notes,
+              courier: cleanDeliveryDraft.courier,
+              deliveryCost: cleanDeliveryDraft.cost,
+              deliveryWindow: cleanDeliveryDraft.window,
+              deliveryNotes: cleanDeliveryDraft.notes,
             }
           : order,
       ),
@@ -681,21 +735,27 @@ export default function AdminPage() {
   }
 
   function addOffer() {
-    if (!offerDraft.title.trim()) return;
+    const cleanOffer = {
+      title: sanitizeText(offerDraft.title, { maxLength: 100 }),
+      target: sanitizeText(offerDraft.target, { maxLength: 140 }),
+      discount: sanitizeMoneyLike(offerDraft.discount),
+    };
+
+    if (!cleanOffer.title) return;
 
     setOffers((current) => [
       {
         id: current.length + 1,
-        title: offerDraft.title,
-        target: offerDraft.target || "Toda la tienda",
-        discount: offerDraft.discount || "Por definir",
+        title: cleanOffer.title,
+        target: cleanOffer.target || "Toda la tienda",
+        discount: cleanOffer.discount || "Por definir",
         active: true,
       },
       ...current,
     ]);
     setOfferDraft({ title: "", target: "", discount: "" });
     setOfferTargetFocused(false);
-    addAudit("Oferta creada", offerDraft.title);
+    addAudit("Oferta creada", cleanOffer.title);
   }
 
   function selectOfferProduct(product: AdminProduct) {
@@ -728,7 +788,9 @@ export default function AdminPage() {
                 <Search className="size-4 text-[#617789]" />
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) =>
+                    setQuery(sanitizeText(event.target.value, { maxLength: 80 }))
+                  }
                   placeholder="Buscar producto"
                   className="h-full w-full bg-transparent text-sm outline-none"
                 />
@@ -802,7 +864,7 @@ export default function AdminPage() {
                     <div className="min-w-0">
                       <p className="truncate font-bold">{product.name}</p>
                       <p className="text-xs text-[#617789]">
-                        Stock {product.stock} ·{" "}
+                        {availabilityFromStock(product.stock)} ·{" "}
                         {isMissingProductImage(product.image)
                           ? "Imagen pendiente"
                           : "Imagen lista"}
@@ -943,7 +1005,12 @@ export default function AdminPage() {
                       setZones((current) =>
                         current.map((item, itemIndex) =>
                           itemIndex === index
-                            ? { ...item, name: event.target.value }
+                            ? {
+                                ...item,
+                                name: sanitizeText(event.target.value, {
+                                  maxLength: 80,
+                                }),
+                              }
                             : item,
                         ),
                       )
@@ -956,7 +1023,10 @@ export default function AdminPage() {
                       setZones((current) =>
                         current.map((item, itemIndex) =>
                           itemIndex === index
-                            ? { ...item, price: event.target.value }
+                            ? {
+                                ...item,
+                                price: sanitizeMoneyLike(event.target.value),
+                              }
                             : item,
                         ),
                       )
@@ -969,7 +1039,12 @@ export default function AdminPage() {
                       setZones((current) =>
                         current.map((item, itemIndex) =>
                           itemIndex === index
-                            ? { ...item, state: event.target.value }
+                            ? {
+                                ...item,
+                                state: sanitizeText(event.target.value, {
+                                  maxLength: 80,
+                                }),
+                              }
                             : item,
                         ),
                       )
@@ -1067,7 +1142,7 @@ export default function AdminPage() {
                 onChange={(event) =>
                   setOfferDraft((current) => ({
                     ...current,
-                    title: event.target.value,
+                    title: sanitizeText(event.target.value, { maxLength: 100 }),
                   }))
                 }
                 placeholder="Nombre de la oferta"
@@ -1081,7 +1156,9 @@ export default function AdminPage() {
                     onChange={(event) => {
                       setOfferDraft((current) => ({
                         ...current,
-                        target: event.target.value,
+                        target: sanitizeText(event.target.value, {
+                          maxLength: 140,
+                        }),
                       }));
                       setOfferTargetFocused(true);
                     }}
@@ -1111,7 +1188,7 @@ export default function AdminPage() {
                                 {product.name}
                               </p>
                               <p className="text-xs text-[#617789]">
-                                {product.category} · Stock {product.stock}
+                                {product.category} · {availabilityFromStock(product.stock)}
                               </p>
                             </div>
                           </button>
@@ -1138,7 +1215,7 @@ export default function AdminPage() {
                 onChange={(event) =>
                   setOfferDraft((current) => ({
                     ...current,
-                    discount: event.target.value,
+                    discount: sanitizeMoneyLike(event.target.value),
                   }))
                 }
                 placeholder="Descuento: 10%, $20.000, domicilio gratis"
@@ -1409,81 +1486,6 @@ export default function AdminPage() {
     );
   }
 
-  if (!adminUnlocked) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-[#F8FAFB] px-4 text-[#062A3E]">
-        <div className="grid w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-2xl lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="relative hidden border-r border-[#0A3D5C]/10 bg-[#F8FAFB] p-6 text-[#062A3E] lg:block">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(0,180,216,0.18),transparent_32%),radial-gradient(circle_at_80%_80%,rgba(255,107,53,0.12),transparent_28%)]" />
-            <div className="relative">
-              <div className="relative mb-6 size-20 overflow-hidden rounded-lg bg-white">
-                <Image
-                  src="/brand/logo.png"
-                  alt="Logo Distribuciones LYM"
-                  fill
-                  sizes="80px"
-                  className="object-contain p-1"
-                />
-              </div>
-              <p className="text-xs font-bold uppercase text-[#00B4D8]">
-                Admin demo
-              </p>
-              <h1 className="mt-2 font-display text-4xl font-bold leading-tight">
-                Panel privado para gestionar la tienda.
-              </h1>
-              <p className="mt-4 text-sm leading-6 text-[#617789]">
-                Acceso visual de presentación. La seguridad real se conectará
-                con Supabase Auth antes de producción.
-              </p>
-            </div>
-          </div>
-
-          <div className="p-5 sm:p-7">
-            <div className="mb-4 flex justify-end">
-              <ThemeToggle />
-            </div>
-            <p className="text-xs font-bold uppercase text-[#00B4D8]">
-              Acceso administrador
-            </p>
-            <h2 className="mt-2 font-display text-3xl font-bold">
-              Ingresar al panel
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-[#617789]">
-              Usa la clave demo <span className="font-bold text-[#0A3D5C]">admin</span>.
-            </p>
-            <label className="mt-5 flex h-12 items-center gap-3 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3">
-              <KeyRound className="size-5 text-[#617789]" />
-              <input
-                value={adminPass}
-                onChange={(event) => setAdminPass(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && adminPass.trim()) {
-                    setAdminUnlocked(true);
-                  }
-                }}
-                type="password"
-                placeholder="Clave de acceso"
-                className="h-full w-full bg-transparent text-sm outline-none"
-              />
-            </label>
-            <button
-              onClick={() => setAdminUnlocked(true)}
-              className="mt-4 h-12 w-full rounded-lg bg-[#FF6B35] text-sm font-bold text-white"
-            >
-              Entrar al administrador
-            </button>
-            <Link
-              href="/"
-              className="mt-3 flex h-11 items-center justify-center rounded-lg border border-[#0A3D5C]/12 text-sm font-bold text-[#0A3D5C]"
-            >
-              Volver a la tienda
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className="min-h-screen bg-[#F8FAFB] text-[#062A3E]">
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -1576,7 +1578,10 @@ export default function AdminPage() {
                   Nuevo producto
                 </button>
                 <button
-                  onClick={() => setAdminUnlocked(false)}
+                  onClick={async () => {
+                    await fetch("/api/admin/session", { method: "DELETE" });
+                    window.location.href = "/admin/login";
+                  }}
                   className="hidden h-10 items-center gap-2 rounded-lg border border-[#0A3D5C]/12 bg-white px-4 text-sm font-bold text-[#0A3D5C] sm:flex"
                 >
                   Salir
@@ -1645,7 +1650,9 @@ export default function AdminPage() {
                   <input
                     value={editingProduct.name}
                     onChange={(event) =>
-                      updateEditingProduct({ name: event.target.value })
+                      updateEditingProduct({
+                        name: sanitizeText(event.target.value, { maxLength: 140 }),
+                      })
                     }
                     className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
                   />
@@ -1659,9 +1666,11 @@ export default function AdminPage() {
                     <input
                       value={editingProduct.category}
                       onChange={(event) =>
-                        updateEditingProduct({
-                          category: event.target.value,
-                          tag: event.target.value,
+                      updateEditingProduct({
+                          category: sanitizeText(event.target.value, {
+                            maxLength: 80,
+                          }),
+                          tag: sanitizeText(event.target.value, { maxLength: 80 }),
                         })
                       }
                       className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
@@ -1674,7 +1683,11 @@ export default function AdminPage() {
                     <input
                       value={editingProduct.adminPrice}
                       onChange={(event) =>
-                        updateEditingProduct({ adminPrice: event.target.value })
+                        updateEditingProduct({
+                          adminPrice: event.target.value
+                            .replace(/[^\d]/g, "")
+                            .slice(0, 12),
+                        })
                       }
                       placeholder="Ej. 69000"
                       className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
@@ -1685,18 +1698,24 @@ export default function AdminPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1.5">
                     <span className="text-sm font-bold text-[#0A3D5C]">
-                      Stock
+                      Disponibilidad
                     </span>
-                    <input
-                      value={editingProduct.stock}
+                    <select
+                      value={availabilityFromStock(editingProduct.stock)}
                       onChange={(event) =>
                         updateEditingProduct({
-                          stock: Number(event.target.value) || 0,
+                          stock:
+                            availabilityOptions.find(
+                              ([label]) => label === event.target.value,
+                            )?.[1] ?? 1,
                         })
                       }
-                      type="number"
-                      className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
-                    />
+                      className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm font-bold text-[#0A3D5C] outline-none"
+                    >
+                      {availabilityOptions.map(([label]) => (
+                        <option key={label}>{label}</option>
+                      ))}
+                    </select>
                   </label>
                   <label className="grid gap-1.5">
                     <span className="text-sm font-bold text-[#0A3D5C]">
@@ -1705,7 +1724,9 @@ export default function AdminPage() {
                     <input
                       value={editingProduct.tag}
                       onChange={(event) =>
-                        updateEditingProduct({ tag: event.target.value })
+                        updateEditingProduct({
+                          tag: sanitizeText(event.target.value, { maxLength: 80 }),
+                        })
                       }
                       className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
                     />
@@ -1916,7 +1937,9 @@ export default function AdminPage() {
                       onChange={(event) =>
                         setDeliveryDraft((current) => ({
                           ...current,
-                          address: event.target.value,
+                          address: sanitizeText(event.target.value, {
+                            maxLength: 180,
+                          }),
                         }))
                       }
                       rows={3}
@@ -1934,7 +1957,7 @@ export default function AdminPage() {
                         onChange={(event) =>
                           setDeliveryDraft((current) => ({
                             ...current,
-                            cost: event.target.value,
+                            cost: sanitizeMoneyLike(event.target.value),
                           }))
                         }
                         className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
@@ -1949,7 +1972,9 @@ export default function AdminPage() {
                         onChange={(event) =>
                           setDeliveryDraft((current) => ({
                             ...current,
-                            courier: event.target.value,
+                            courier: sanitizeText(event.target.value, {
+                              maxLength: 80,
+                            }),
                           }))
                         }
                         placeholder="Nombre del repartidor"
@@ -1967,7 +1992,9 @@ export default function AdminPage() {
                       onChange={(event) =>
                         setDeliveryDraft((current) => ({
                           ...current,
-                          window: event.target.value,
+                          window: sanitizeText(event.target.value, {
+                            maxLength: 80,
+                          }),
                         }))
                       }
                       className="h-11 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm outline-none"
@@ -1983,7 +2010,7 @@ export default function AdminPage() {
                       onChange={(event) =>
                         setDeliveryDraft((current) => ({
                           ...current,
-                          notes: event.target.value,
+                          notes: sanitizeLongText(event.target.value, 300),
                         }))
                       }
                       placeholder="Ej. llamar antes de llegar, portería, producto pesado..."

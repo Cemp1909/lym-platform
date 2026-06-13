@@ -47,9 +47,14 @@ export const metadata: Metadata = {
     url: "https://distribucioneslym.com",
   },
   icons: {
-    icon: "/icon.png",
-    shortcut: "/icon.png",
-    apple: "/apple-icon.png",
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/brand/logo.png?v=lym6", type: "image/png" },
+      { url: "/favicon.png?v=lym6", type: "image/png" },
+      { url: "/icon.png?v=lym6", type: "image/png" },
+    ],
+    shortcut: "/brand/logo.png?v=lym6",
+    apple: "/apple-icon.png?v=lym6",
   },
 };
 

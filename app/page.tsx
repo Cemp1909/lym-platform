@@ -6,6 +6,12 @@ import { useEffect, useMemo, useState } from "react";
 import { categories, products, type Product } from "./products";
 import { FloatingWhatsApp } from "./floating-whatsapp";
 import { ThemeToggle } from "./theme-toggle";
+import {
+  sanitizeEmail,
+  sanitizeLongText,
+  sanitizePhone,
+  sanitizeText,
+} from "./security/sanitize";
 import { whatsappMessages, whatsappUrl } from "./whatsapp";
 import {
   ArrowLeft,
@@ -101,10 +107,10 @@ function productBrand(product: Product) {
   return brandOptions[(product.id % (brandOptions.length - 1)) + 1];
 }
 
-function stockLabel(stock: number) {
-  if (stock <= 0) return ["Bajo pedido", "bg-[#F8FAFB] text-[#617789]"];
-  if (stock <= 5) return ["Pocas unidades", "bg-[#FFF4EF] text-[#C2441A]"];
-  return ["Disponible", "bg-[#EDFFF5] text-[#116A3C]"];
+function availabilityLabel(stock: number) {
+  if (stock <= 0) return ["Agotado temporalmente", "bg-[#FFF4EF] text-[#C2441A]"];
+  if (stock <= 1) return ["Consultar disponibilidad", "bg-[#EAF8FC] text-[#0084A3]"];
+  return ["Disponible para confirmar", "bg-[#EDFFF5] text-[#116A3C]"];
 }
 
 const featuredProductIds = [1, 2, 4, 8];
@@ -130,12 +136,19 @@ async function createPasswordToken(email: string, password: string) {
   ).join("");
 }
 
+function sanitizeLoginIdentifier(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9._%+\-@]/g, "")
+    .slice(0, 120);
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [advisorProblem, setAdvisorProblem] = useState("");
   const [category, setCategory] = useState("Todos");
-  const [stockFilter, setStockFilter] = useState("Todos");
+  const [availabilityFilter, setAvailabilityFilter] = useState("Todos");
   const [priceFilter, setPriceFilter] = useState("Todos");
   const [brandFilter, setBrandFilter] = useState("Todas");
   const [compareIds, setCompareIds] = useState<number[]>([]);
@@ -183,10 +196,10 @@ export default function Home() {
       const matchesQuery = product.name
         .toLowerCase()
         .includes(query.trim().toLowerCase());
-      const matchesStock =
-        stockFilter === "Todos" ||
-        (stockFilter === "Disponibles" && product.stock > 0) ||
-        (stockFilter === "Favoritos" && favorites[product.id]);
+      const matchesAvailability =
+        availabilityFilter === "Todos" ||
+        (availabilityFilter === "Disponibilidad por confirmar" && product.stock > 0) ||
+        (availabilityFilter === "Favoritos" && favorites[product.id]);
       const matchesPrice =
         priceFilter === "Todos" ||
         (priceFilter === "Con precio" && product.price !== null) ||
@@ -197,12 +210,12 @@ export default function Home() {
       return (
         matchesCategory &&
         matchesQuery &&
-        matchesStock &&
+        matchesAvailability &&
         matchesPrice &&
         matchesBrand
       );
     });
-  }, [brandFilter, category, favorites, priceFilter, query, stockFilter]);
+  }, [availabilityFilter, brandFilter, category, favorites, priceFilter, query]);
   const searchSuggestions = query.trim()
     ? products
         .filter((product) =>
@@ -268,15 +281,18 @@ export default function Home() {
   }
 
   async function submitAuth() {
+    const loginIdentifier = sanitizeLoginIdentifier(authForm.email);
+
     const fallbackName = authMode === "login" ? "Cliente LYM" : "Cliente";
-    const email = authForm.email.trim() || "cliente@demo.com";
+    const email = sanitizeEmail(loginIdentifier) || "cliente@demo.com";
     const passwordToken = authForm.password
       ? await createPasswordToken(email, authForm.password)
       : null;
 
     const nextUser = {
-      name: authForm.name.trim() || fallbackName,
+      name: sanitizeText(authForm.name, { maxLength: 80 }) || fallbackName,
       email,
+      phone: sanitizePhone(authForm.phone),
       sessionToken: createSessionToken(),
       passwordToken,
       tokenVersion: "demo-sha256-v1",
@@ -375,14 +391,15 @@ export default function Home() {
       <header className="sticky top-0 z-30 border-b border-[#0A3D5C]/10 bg-[#F8FAFB]/92 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div className="relative size-12 overflow-hidden rounded-lg border border-[#0A3D5C]/10 bg-white">
+            <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#0A3D5C]/10 bg-white p-1">
               <Image
                 src="/brand/logo.png"
                 alt="Logo LYM"
-                fill
-                sizes="48px"
-                className="object-contain p-1.5"
+                width={56}
+                height={49}
+                className="h-full w-full object-contain"
                 priority
+                unoptimized
               />
             </div>
             <div>
@@ -697,7 +714,9 @@ export default function Home() {
               <Search className="size-5 shrink-0 text-[#617789]" />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) =>
+                  setQuery(sanitizeText(event.target.value, { maxLength: 80 }))
+                }
                 placeholder="Buscar por nombre, marca o tipo de producto"
                 className="h-full w-full bg-transparent text-sm outline-none placeholder:text-[#8A9AA6]"
               />
@@ -770,12 +789,12 @@ export default function Home() {
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[180px_180px_180px_1fr_auto_auto_auto]">
               <select
-                value={stockFilter}
-                onChange={(event) => setStockFilter(event.target.value)}
+                value={availabilityFilter}
+                onChange={(event) => setAvailabilityFilter(event.target.value)}
                 className="h-10 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3 text-sm font-bold text-[#0A3D5C] outline-none"
               >
                 <option>Todos</option>
-                <option>Disponibles</option>
+                <option>Disponibilidad por confirmar</option>
                 <option>Favoritos</option>
               </select>
               <select
@@ -800,7 +819,7 @@ export default function Home() {
                 onClick={() => {
                   setQuery("");
                   setCategory("Todos");
-                  setStockFilter("Todos");
+                  setAvailabilityFilter("Todos");
                   setPriceFilter("Todos");
                   setBrandFilter("Todas");
                 }}
@@ -860,9 +879,9 @@ export default function Home() {
                     {product.unit}
                   </p>
                   <span
-                    className={`mt-2 inline-flex rounded-md px-2 py-1 text-xs font-bold ${stockLabel(product.stock)[1]}`}
+                    className={`mt-2 inline-flex rounded-md px-2 py-1 text-xs font-bold ${availabilityLabel(product.stock)[1]}`}
                   >
-                    {stockLabel(product.stock)[0]} · {product.stock}
+                    {availabilityLabel(product.stock)[0]}
                   </span>
                 </div>
                 <button
@@ -948,7 +967,7 @@ export default function Home() {
               onClick={() => {
                 setQuery("");
                 setCategory("Todos");
-                setStockFilter("Todos");
+                setAvailabilityFilter("Todos");
                 setPriceFilter("Todos");
               }}
               className="mt-4 h-10 rounded-lg bg-[#0A3D5C] px-4 text-sm font-bold text-white"
@@ -1104,10 +1123,10 @@ export default function Home() {
                 </div>
                 <div className="rounded-lg bg-[#F8FAFB] p-3">
                   <p className="text-xs font-bold uppercase text-[#617789]">
-                    Stock
+                    Disponibilidad
                   </p>
                   <p className="mt-1 font-display text-xl font-bold text-[#0A3D5C]">
-                    {selectedProduct.stock}
+                    {availabilityLabel(selectedProduct.stock)[0]}
                   </p>
                 </div>
                 <div className="rounded-lg bg-[#F8FAFB] p-3">
@@ -1153,7 +1172,7 @@ export default function Home() {
                 <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                   <p><span className="font-bold">Categoría:</span> {selectedProduct.category}</p>
                   <p><span className="font-bold">Presentación:</span> {selectedProduct.unit}</p>
-                  <p><span className="font-bold">Stock:</span> {selectedProduct.stock}</p>
+                  <p><span className="font-bold">Disponibilidad:</span> {availabilityLabel(selectedProduct.stock)[0]}</p>
                   <p><span className="font-bold">Uso:</span> Piscinas residenciales y comerciales</p>
                 </div>
                 <button
@@ -1483,8 +1502,8 @@ export default function Home() {
                         <span className="font-bold">{product.category}</span>
                       </div>
                       <div className="flex justify-between gap-2">
-                        <span className="text-[#617789]">Stock</span>
-                        <span className="font-bold">{stockLabel(product.stock)[0]}</span>
+                        <span className="text-[#617789]">Disponibilidad</span>
+                        <span className="font-bold">{availabilityLabel(product.stock)[0]}</span>
                       </div>
                       <div className="flex justify-between gap-2">
                         <span className="text-[#617789]">Precio</span>
@@ -1711,7 +1730,7 @@ export default function Home() {
                         onChange={(event) =>
                           setAuthForm((current) => ({
                             ...current,
-                            name: event.target.value,
+                            name: sanitizeText(event.target.value, { maxLength: 80 }),
                           }))
                         }
                         placeholder="Ej. Camilo Mora"
@@ -1732,10 +1751,11 @@ export default function Home() {
                       onChange={(event) =>
                         setAuthForm((current) => ({
                           ...current,
-                          email: event.target.value,
+                          email: sanitizeLoginIdentifier(event.target.value),
                         }))
                       }
                       placeholder="correo@ejemplo.com"
+                      autoComplete="username"
                       className="h-full w-full bg-transparent text-sm outline-none"
                     />
                   </div>
@@ -1753,7 +1773,7 @@ export default function Home() {
                         onChange={(event) =>
                           setAuthForm((current) => ({
                             ...current,
-                            phone: event.target.value,
+                            phone: sanitizePhone(event.target.value),
                           }))
                         }
                         placeholder="300 000 0000"
@@ -1981,7 +2001,9 @@ export default function Home() {
                             onChange={(event) =>
                               setDeliveryDetails((current) => ({
                                 ...current,
-                                name: event.target.value,
+                                name: sanitizeText(event.target.value, {
+                                  maxLength: 80,
+                                }),
                               }))
                             }
                             placeholder="Nombre de quien recibe"
@@ -1992,7 +2014,7 @@ export default function Home() {
                             onChange={(event) =>
                               setDeliveryDetails((current) => ({
                                 ...current,
-                                phone: event.target.value,
+                                phone: sanitizePhone(event.target.value),
                               }))
                             }
                             placeholder="Teléfono o WhatsApp"
@@ -2003,7 +2025,9 @@ export default function Home() {
                             onChange={(event) =>
                               setDeliveryDetails((current) => ({
                                 ...current,
-                                address: event.target.value,
+                                address: sanitizeText(event.target.value, {
+                                  maxLength: 140,
+                                }),
                               }))
                             }
                             placeholder="Dirección de entrega"
@@ -2014,7 +2038,9 @@ export default function Home() {
                             onChange={(event) =>
                               setDeliveryDetails((current) => ({
                                 ...current,
-                                neighborhood: event.target.value,
+                                neighborhood: sanitizeText(event.target.value, {
+                                  maxLength: 80,
+                                }),
                               }))
                             }
                             placeholder="Barrio / conjunto / vereda"
@@ -2025,7 +2051,7 @@ export default function Home() {
                             onChange={(event) =>
                               setDeliveryDetails((current) => ({
                                 ...current,
-                                notes: event.target.value,
+                                notes: sanitizeLongText(event.target.value, 300),
                               }))
                             }
                             placeholder="Indicaciones adicionales"

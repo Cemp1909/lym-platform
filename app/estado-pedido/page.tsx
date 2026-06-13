@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { InfoFooter, InfoHeader } from "../info-layout";
+import { sanitizeOrderCode } from "../security/sanitize";
 import { whatsappMessages, whatsappUrl } from "../whatsapp";
 
 type OrderLine = {
@@ -113,7 +114,7 @@ const demoOrders: Record<string, DemoOrder> = {
 };
 
 function normalizeCode(code: string) {
-  return code.trim().toUpperCase();
+  return sanitizeOrderCode(code);
 }
 
 function EstadoPedidoContent() {
@@ -169,7 +170,7 @@ function EstadoPedidoContent() {
               <ClipboardList className="size-5 text-[#617789]" />
               <input
                 value={orderCode}
-                onChange={(event) => setOrderCode(event.target.value)}
+                onChange={(event) => setOrderCode(sanitizeOrderCode(event.target.value))}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") consultOrder();
                 }}

@@ -12,6 +12,13 @@ create type public.product_status as enum (
   'needs_cleanup'
 );
 
+create type public.availability_status as enum (
+  'available_to_confirm',
+  'check_availability',
+  'on_request',
+  'temporarily_unavailable'
+);
+
 create type public.order_status as enum (
   'payment_pending',
   'paid',
@@ -39,6 +46,7 @@ create table public.products (
   price integer,
   unit text not null default 'Unidad',
   stock integer not null default 0,
+  availability public.availability_status not null default 'check_availability',
   tag text,
   image_url text,
   status public.product_status not null default 'pending_price',
@@ -119,6 +127,21 @@ create table public.audit_log (
   created_at timestamptz not null default now()
 );
 
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.profiles
+    where profiles.id = auth.uid()
+    and profiles.role = 'admin'
+  );
+$$;
+
 alter table public.profiles enable row level security;
 alter table public.products enable row level security;
 alter table public.offers enable row level security;
@@ -128,17 +151,47 @@ alter table public.order_items enable row level security;
 alter table public.delivery_assignments enable row level security;
 alter table public.audit_log enable row level security;
 
+grant usage on schema public to anon, authenticated;
+grant select on public.products to anon, authenticated;
+grant select on public.offers to anon, authenticated;
+grant select, insert, update on public.profiles to authenticated;
+grant select, insert, update, delete on public.customer_addresses to authenticated;
+grant select, insert on public.orders to authenticated;
+grant select, insert on public.order_items to authenticated;
+grant select on public.delivery_assignments to authenticated;
+grant select, insert on public.audit_log to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+
 create policy "Productos publicados visibles"
 on public.products for select
 using (status in ('published', 'offer_active', 'on_request'));
+
+create policy "Admin gestiona productos"
+on public.products for all
+using (public.is_admin())
+with check (public.is_admin());
 
 create policy "Ofertas activas visibles"
 on public.offers for select
 using (active = true);
 
+create policy "Admin gestiona ofertas"
+on public.offers for all
+using (public.is_admin())
+with check (public.is_admin());
+
 create policy "Cliente ve su perfil"
 on public.profiles for select
 using (auth.uid() = id);
+
+create policy "Admin ve perfiles"
+on public.profiles for select
+using (public.is_admin());
+
+create policy "Admin actualiza perfiles"
+on public.profiles for update
+using (public.is_admin())
+with check (public.is_admin());
 
 create policy "Cliente actualiza su perfil"
 on public.profiles for update
@@ -157,6 +210,11 @@ create policy "Cliente ve sus pedidos"
 on public.orders for select
 using (auth.uid() = user_id);
 
+create policy "Admin gestiona pedidos"
+on public.orders for all
+using (public.is_admin())
+with check (public.is_admin());
+
 create policy "Cliente ve items de sus pedidos"
 on public.order_items for select
 using (
@@ -167,6 +225,11 @@ using (
   )
 );
 
+create policy "Admin gestiona items de pedidos"
+on public.order_items for all
+using (public.is_admin())
+with check (public.is_admin());
+
 create policy "Cliente ve domicilio de sus pedidos"
 on public.delivery_assignments for select
 using (
@@ -176,3 +239,16 @@ using (
     and orders.user_id = auth.uid()
   )
 );
+
+create policy "Admin gestiona domicilios"
+on public.delivery_assignments for all
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Admin ve auditoria"
+on public.audit_log for select
+using (public.is_admin());
+
+create policy "Admin crea auditoria"
+on public.audit_log for insert
+with check (public.is_admin());
