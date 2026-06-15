@@ -18,6 +18,8 @@ type RateLimitResult = {
   remaining: number;
   resetAt: number;
   retryAfter: number;
+  key: string;
+  storage: "memory" | "redis";
 };
 
 declare global {
@@ -74,6 +76,8 @@ export function checkRateLimit(
       remaining: Math.max(limit - 1, 0),
       resetAt: now + windowMs,
       retryAfter: 0,
+      key,
+      storage: "memory",
     };
   }
 
@@ -84,6 +88,8 @@ export function checkRateLimit(
       remaining: 0,
       resetAt: current.resetAt,
       retryAfter: Math.ceil((current.resetAt - now) / 1000),
+      key,
+      storage: "memory",
     };
   }
 
@@ -96,28 +102,160 @@ export function checkRateLimit(
     remaining: Math.max(limit - current.count, 0),
     resetAt: current.resetAt,
     retryAfter: 0,
+    key,
+    storage: "memory",
   };
 }
 
-export function checkRequestRateLimit(
+function getRateLimitIdentity(request: NextRequest, userId?: string | null) {
+  if (userId) return `user:${userId}`;
+
+  const tokenSubject = getJwtSubject(
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "",
+  );
+
+  if (tokenSubject) return `user:${tokenSubject}`;
+
+  const adminSession = request.cookies.get("lym_admin_session")?.value;
+  const adminSecret = process.env.ADMIN_SESSION_SECRET;
+
+  if (adminSession && adminSecret && adminSession === adminSecret) {
+    return "admin:session";
+  }
+
+  return `ip:${getClientIp(request)}`;
+}
+
+function getRequestLimitOptions(request: NextRequest, options: RateLimitOptions) {
+  const pathname = request.nextUrl.pathname;
+  const isAuthRoute =
+    pathname.startsWith("/api/auth/") ||
+    pathname.startsWith("/api/admin/session");
+  const isAdminRoute = pathname.startsWith("/api/admin/");
+  const defaultRouteLimit = isAuthRoute
+    ? 12
+    : isAdminRoute
+      ? 180
+      : defaultLimit;
+  const envName = isAuthRoute
+    ? "RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE"
+    : isAdminRoute
+      ? "RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE"
+      : "RATE_LIMIT_REQUESTS_PER_MINUTE";
+
+  return {
+    limit: options.limit ?? readPositiveNumber(process.env[envName], defaultRouteLimit),
+    windowMs:
+      options.windowMs ??
+      readPositiveNumber(process.env.RATE_LIMIT_WINDOW_MS, defaultWindowMs),
+    keyPrefix:
+      options.keyPrefix ??
+      (isAuthRoute ? "auth" : isAdminRoute ? "admin-api" : "api"),
+  };
+}
+
+export async function checkRequestRateLimit(
   request: NextRequest,
   options: RateLimitOptions = {},
 ) {
-  const identifier = options.userId
-    ? `user:${options.userId}`
-    : `ip:${getClientIp(request)}`;
+  const identifier = getRateLimitIdentity(request, options.userId);
+  const routeOptions = getRequestLimitOptions(request, options);
+  const redisResult = await checkRedisRateLimit(identifier, routeOptions);
 
-  return checkRateLimit(identifier, options);
+  return redisResult ?? checkRateLimit(identifier, routeOptions);
 }
 
 export function applyRateLimitHeaders(response: Response, result: RateLimitResult) {
   response.headers.set("X-RateLimit-Limit", String(result.limit));
   response.headers.set("X-RateLimit-Remaining", String(result.remaining));
   response.headers.set("X-RateLimit-Reset", String(Math.ceil(result.resetAt / 1000)));
+  response.headers.set("X-RateLimit-Storage", result.storage);
 
   if (!result.allowed) {
     response.headers.set("Retry-After", String(result.retryAfter));
   }
 
   return response;
+}
+
+async function checkRedisRateLimit(
+  identifier: string,
+  options: Required<Pick<RateLimitOptions, "limit" | "windowMs" | "keyPrefix">>,
+): Promise<RateLimitResult | null> {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) return null;
+
+  const now = Date.now();
+  const safeKey = encodeURIComponent(`lym:${options.keyPrefix}:${identifier}`);
+
+  try {
+    const count = Number(
+      await upstashCommand<number>(url, token, ["INCR", safeKey]),
+    );
+
+    if (count === 1) {
+      await upstashCommand(url, token, ["PEXPIRE", safeKey, String(options.windowMs)]);
+    }
+
+    const ttl = Number(await upstashCommand<number>(url, token, ["PTTL", safeKey]));
+    const remainingTtl = ttl > 0 ? ttl : options.windowMs;
+    const resetAt = now + remainingTtl;
+
+    return {
+      allowed: count <= options.limit,
+      limit: options.limit,
+      remaining: Math.max(options.limit - count, 0),
+      resetAt,
+      retryAfter: count > options.limit ? Math.ceil(remainingTtl / 1000) : 0,
+      key: `lym:${options.keyPrefix}:${identifier}`,
+      storage: "redis",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function upstashCommand<T = unknown>(
+  url: string,
+  token: string,
+  command: string[],
+): Promise<T> {
+  const response = await fetch(`${url.replace(/\/$/, "")}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+  });
+
+  if (!response.ok) {
+    throw new Error("No se pudo consultar Redis para rate limiting.");
+  }
+
+  const payload = (await response.json()) as { result: T; error?: string };
+  if (payload.error) throw new Error(payload.error);
+
+  return payload.result;
+}
+
+function getJwtSubject(token: string) {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+
+    const normalizedPayload = payload
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const decodedPayload = JSON.parse(atob(normalizedPayload)) as {
+      sub?: string;
+    };
+
+    return decodedPayload.sub || null;
+  } catch {
+    return null;
+  }
 }

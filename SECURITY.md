@@ -4,7 +4,7 @@
 
 - Variables sensibles fuera del codigo fuente mediante `.env.local`.
 - CORS aplicado a `/api/*` con `ALLOWED_ORIGINS`.
-- Rate limiting aplicado a `/api/*`.
+- Rate limiting aplicado a `/api/*`, con soporte distribuido para Upstash Redis en Vercel.
 - Sanitizacion de inputs en tienda, admin, estado de pedido y CSV.
 - Cabeceras HTTP de seguridad configuradas en `next.config.ts`.
 - `/admin` protegido por `proxy.ts` y cookie `HttpOnly`.
@@ -21,7 +21,11 @@ SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_SITE_URL=https://distribucioneslym.com
 ALLOWED_ORIGINS=https://distribucioneslym.com,https://www.distribucioneslym.com
 RATE_LIMIT_REQUESTS_PER_MINUTE=120
+RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE=12
+RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE=180
 RATE_LIMIT_WINDOW_MS=60000
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ADMIN_PASSWORD=
 ADMIN_SESSION_SECRET=
 ```
@@ -42,9 +46,8 @@ privados. `SUPABASE_SERVICE_ROLE_KEY` nunca debe usarse en componentes cliente.
 9. Revisar cabeceras con una herramienta externa como SecurityHeaders.com.
 10. Probar Wompi en sandbox antes de activar produccion.
 
-## Pendiente cuando se conecte Supabase Auth completo
+## Pendiente operacional
 
-El acceso temporal de `/admin/login` debe reemplazarse por validacion de sesion
-Supabase y rol `admin` desde `profiles`. La cookie actual es suficiente para una
-entrega controlada, pero el modelo final debe centralizar usuarios y roles en
-Supabase Auth.
+Supabase Auth ya gestiona clientes y puede validar administradores por rol
+`admin` en `profiles`. Para produccion falta activar Wompi con llaves reales y,
+si se requiere conteo global de rate limiting en Vercel, configurar Upstash Redis.

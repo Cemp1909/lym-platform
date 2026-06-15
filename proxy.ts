@@ -10,7 +10,7 @@ import {
   checkRequestRateLimit,
 } from "@/app/security/rate-limit";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/admin")) {
     const sessionSecret = process.env.ADMIN_SESSION_SECRET;
     const sessionCookie = request.cookies.get("lym_admin_session")?.value;
@@ -48,7 +48,7 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  const rateLimit = checkRequestRateLimit(request);
+  const rateLimit = await checkRequestRateLimit(request);
 
   if (!rateLimit.allowed) {
     const response = NextResponse.json(

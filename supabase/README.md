@@ -57,16 +57,18 @@ politicas por usuario y de no exponer `SUPABASE_SERVICE_ROLE_KEY` al cliente.
 
 ```bash
 RATE_LIMIT_REQUESTS_PER_MINUTE=120
+RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE=12
+RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE=180
 RATE_LIMIT_WINDOW_MS=60000
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
-Mientras no haya endpoints autenticados, el limite se aplica por IP. Cuando los
-endpoints lean la sesion de Supabase, pueden usar `checkRateLimit` con `user_id`
-para tener limite por usuario real.
-
-El limitador actual usa memoria del servidor, suficiente para demo y una primera
-proteccion. En produccion con varias instancias conviene moverlo a Redis/Upstash
-o al firewall del proveedor para que el conteo sea compartido.
+El limite se aplica por usuario cuando la peticion trae token de Supabase, por
+sesion de admin cuando aplica, y por IP para endpoints publicos. En Vercel, para
+que el conteo sea global entre instancias, configura `UPSTASH_REDIS_REST_URL` y
+`UPSTASH_REDIS_REST_TOKEN`. Si no existen, el sistema usa memoria local como
+respaldo.
 
 ## Admin
 
