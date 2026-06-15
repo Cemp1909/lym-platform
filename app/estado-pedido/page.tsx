@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { InfoFooter, InfoHeader } from "../info-layout";
 import { sanitizeOrderCode } from "../security/sanitize";
 import { whatsappMessages, whatsappUrl } from "../whatsapp";
@@ -26,15 +26,14 @@ import { whatsappMessages, whatsappUrl } from "../whatsapp";
 type OrderLine = {
   name: string;
   quantity: number;
-  price: string;
+  unitPrice: number;
 };
 
-type DemoOrder = {
+type TrackedOrder = {
   id: string;
   client: string;
-  date: string;
+  createdAt: string;
   total: string;
-  payment: string;
   delivery: string;
   address: string;
   phone: string;
@@ -53,77 +52,70 @@ const steps = [
   ["Entregado", "Pedido finalizado"],
 ];
 
-const demoOrders: Record<string, DemoOrder> = {
-  "LYM-1048": {
-    id: "LYM-1048",
-    client: "Conjunto Reserva del Llano",
-    date: "11 junio 2026",
-    total: "Por confirmar",
-    payment: "Pago pendiente con Wompi demo",
-    delivery: "Domicilio local",
-    address: "Cra 22 #18-40, Torre 3, Villavicencio",
-    phone: "310 555 1948",
-    courier: "Sin asignar todavía",
-    eta: "Hoy, 4:00 p.m. - 6:00 p.m.",
-    status: "Preparando pedido",
-    activeStep: 2,
-    lines: [
-      { name: "Cloro granulado al 70%", quantity: 2, price: "$68.000" },
-      { name: "Clarificador para piscina", quantity: 1, price: "$28.000" },
-      { name: "Test kit pH y cloro", quantity: 1, price: "$45.000" },
-      { name: "Cepillo curvo piscina", quantity: 1, price: "$36.000" },
-    ],
-  },
-  "LYM-1047": {
-    id: "LYM-1047",
-    client: "Hotel Campestre Azul",
-    date: "10 junio 2026",
-    total: "Por confirmar",
-    payment: "Cotización aprobada",
-    delivery: "Recoger en punto",
-    address: "Punto físico Distribuciones LYM",
-    phone: "318 400 2201",
-    courier: "Equipo de mostrador",
-    eta: "Listo para recoger",
-    status: "Preparando para entrega",
-    activeStep: 2,
-    lines: [
-      { name: "Tabletas de cloro", quantity: 6, price: "$72.000" },
-      { name: "Alguicida mantenimiento", quantity: 3, price: "$31.000" },
-      { name: "Red recogehojas", quantity: 2, price: "$42.000" },
-    ],
-  },
-  "LYM-1046": {
-    id: "LYM-1046",
-    client: "Casa Quinta Apiay",
-    date: "9 junio 2026",
-    total: "Por confirmar",
-    payment: "Pago confirmado",
-    delivery: "Domicilio local",
-    address: "Barrio Barzal, casa 18, Villavicencio",
-    phone: "301 760 8891",
-    courier: "Domiciliario LYM",
-    eta: "En ruta",
-    status: "En domicilio",
-    activeStep: 3,
-    lines: [
-      { name: "Bomba para piscina", quantity: 1, price: "$390.000" },
-      { name: "Arena sílica filtrante", quantity: 2, price: "$52.000" },
-    ],
-  },
-};
-
 function normalizeCode(code: string) {
   return sanitizeOrderCode(code);
 }
 
+function money(value: number) {
+  if (!value) return "Por definir";
+
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function activeStepFromStatus(status: string) {
+  if (status === "Entregado") return 4;
+  if (status === "En domicilio") return 3;
+  if (status === "Preparando") return 2;
+  if (status === "Pagado") return 1;
+  return 0;
+}
+
 function EstadoPedidoContent() {
   const params = useSearchParams();
-  const initialCode = normalizeCode(params.get("pedido") || "LYM-1048");
+  const initialCode = normalizeCode(params.get("pedido") || "");
   const [orderCode, setOrderCode] = useState(initialCode);
   const [submittedCode, setSubmittedCode] = useState(initialCode);
-  const order = demoOrders[normalizeCode(submittedCode)];
+  const [order, setOrder] = useState<TrackedOrder | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const orderWhatsAppUrl = whatsappUrl(whatsappMessages.order(submittedCode));
+
+  useEffect(() => {
+    if (!submittedCode) return;
+
+    const controller = new AbortController();
+
+    async function loadOrder() {
+      setIsLoading(true);
+      try {
+        const response = await fetch(
+          `/api/orders?code=${encodeURIComponent(submittedCode)}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) {
+          setOrder(null);
+          return;
+        }
+
+        const payload = (await response.json()) as { order?: TrackedOrder };
+        const nextOrder = payload.order || null;
+        setOrder(
+          nextOrder
+            ? { ...nextOrder, activeStep: activeStepFromStatus(nextOrder.status) }
+            : null,
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadOrder().catch(() => setOrder(null));
+
+    return () => controller.abort();
+  }, [submittedCode]);
 
   function consultOrder() {
     setSubmittedCode(normalizeCode(orderCode));
@@ -157,8 +149,8 @@ function EstadoPedidoContent() {
             Sigue tu compra paso a paso.
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-[#617789]">
-            Vista demo con la misma información que verá el cliente cuando
-            conectemos base de datos, pagos y actualizaciones del administrador.
+            Consulta real conectada a la base de datos para ver estado,
+            productos, entrega y remisión.
           </p>
         </div>
       </section>
@@ -174,7 +166,7 @@ function EstadoPedidoContent() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter") consultOrder();
                 }}
-                placeholder="Ej. LYM-1048"
+                placeholder="Ej. LYM-260614-1234"
                 className="h-full w-full bg-transparent text-sm font-bold uppercase outline-none"
               />
             </label>
@@ -186,7 +178,11 @@ function EstadoPedidoContent() {
             </button>
           </div>
 
-          {!order ? (
+          {isLoading ? (
+            <div className="mt-5 rounded-lg border border-[#0A3D5C]/10 bg-[#F8FAFB] p-5 text-sm font-bold text-[#617789]">
+              Consultando pedido...
+            </div>
+          ) : !order ? (
             <div className="mt-5 rounded-lg border border-[#FFD4C4] bg-[#FFF4EF] p-5">
               <div className="flex items-start gap-3">
                 <AlertCircle className="mt-1 size-6 shrink-0 text-[#FF6B35]" />
@@ -237,8 +233,12 @@ function EstadoPedidoContent() {
                   <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {[
                       [UserRound, "Cliente", order.client],
-                      [CalendarClock, "Fecha", order.date],
-                      [CreditCard, "Pago", order.payment],
+                      [
+                        CalendarClock,
+                        "Fecha",
+                        new Date(order.createdAt).toLocaleDateString("es-CO"),
+                      ],
+                      [CreditCard, "Pago", order.status],
                       [Truck, "Entrega", order.delivery],
                     ].map(([Icon, label, value]) => (
                       <div key={label as string} className="rounded-lg bg-white p-3">
@@ -305,7 +305,7 @@ function EstadoPedidoContent() {
                           Cant. {line.quantity}
                         </p>
                         <p className="text-sm font-bold text-[#FF6B35]">
-                          {line.price}
+                          {money(line.unitPrice * line.quantity)}
                         </p>
                       </div>
                     ))}

@@ -1,6 +1,6 @@
 # Distribuciones LYM Platform
 
-Plataforma demo para venta de productos de piscina, gestión administrativa, cotizaciones, remisiones y flujo visual de pago Wompi.
+Plataforma para venta de productos de piscina, gestión administrativa, cotizaciones, remisiones, clientes y pedidos conectados a Supabase.
 
 ## Enlaces locales
 
@@ -13,11 +13,9 @@ Plataforma demo para venta de productos de piscina, gestión administrativa, cot
 - Politicas: http://127.0.0.1:3002/politicas
 - Admin: http://127.0.0.1:3002/admin
 
-## Admin demo
+## Admin
 
-Clave visual: `admin`
-
-Esta clave no es seguridad real. Antes de producción debe conectarse con Supabase Auth o un sistema equivalente.
+El panel usa sesión protegida y puede validar usuarios con rol `admin` en Supabase.
 
 ## Flujo comprador
 
@@ -25,7 +23,7 @@ Esta clave no es seguridad real. Antes de producción debe conectarse con Supaba
 - Filtrar por categoría, disponibilidad, favoritos o productos por cotizar.
 - Ver detalle del producto.
 - Agregar al carrito.
-- Solicitar cotización por WhatsApp o continuar al demo de Wompi.
+- Solicitar cotización por WhatsApp o continuar al checkout preparado para Wompi.
 - Crear cuenta antes de pagar.
 - Consultar estado del pedido.
 
@@ -38,13 +36,10 @@ Esta clave no es seguridad real. Antes de producción debe conectarse con Supaba
 - Asignar domicilios.
 - Generar remisiones.
 - Exportar inventario CSV.
-- Restaurar datos demo.
+- Recargar datos desde Supabase.
 
 ## Pendiente para producción
 
-- Base de datos de productos, clientes, pedidos, favoritos y ofertas.
 - Subida real de imágenes a Storage.
-- Autenticación real para clientes y administradores.
-- Integración real con Wompi.
+- Activar llaves reales de Wompi.
 - Notificaciones WhatsApp/API.
-- Reglas de seguridad y permisos por rol.

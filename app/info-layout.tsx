@@ -6,6 +6,7 @@ import { LogOut, ShoppingCart, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { contactInfo } from "./contact-info";
 import { FloatingWhatsApp } from "./floating-whatsapp";
+import { createSupabaseBrowserClient } from "./supabase/browser";
 import { ThemeToggle } from "./theme-toggle";
 
 const currentUserStorageKey = "lym-current-user";
@@ -32,17 +33,33 @@ export function InfoHeader({ active }: { active: string }) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const savedUser = window.localStorage.getItem(currentUserStorageKey);
+      const supabase = createSupabaseBrowserClient();
 
-      if (savedUser) {
-        setCurrentUser(JSON.parse(savedUser));
-      }
+      supabase.auth.getSession().then(async ({ data }) => {
+        const token = data.session?.access_token;
+
+        if (!token) return;
+
+        const response = await fetch("/api/account/me", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+
+        if (!response.ok) return;
+
+        const payload = (await response.json()) as {
+          user?: { name: string; email: string };
+        };
+
+        if (payload.user) setCurrentUser(payload.user);
+      });
     }, 0);
 
     return () => window.clearTimeout(timer);
   }, []);
 
   function logout() {
+    createSupabaseBrowserClient().auth.signOut();
     window.localStorage.removeItem(currentUserStorageKey);
     setCurrentUser(null);
   }

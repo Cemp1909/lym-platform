@@ -5,12 +5,89 @@ import { MessageCircle, ShoppingCart } from "lucide-react";
 import { InfoFooter, InfoHeader } from "../../info-layout";
 import { PrintButton } from "../../print-button";
 import { products } from "../../products";
+import { createSupabaseAdminClient } from "../../supabase/admin";
 import { whatsappMessages, whatsappUrl } from "../../whatsapp";
 
 export const metadata: Metadata = {
   title: "Cotización",
-  description: "Cotización pública demo para pedidos de Distribuciones LYM.",
+  description: "Cotización pública para pedidos de Distribuciones LYM.",
 };
+
+type QuoteItem = {
+  id: number;
+  name: string;
+  category: string;
+  image: string;
+  price: number | null;
+  quantity: number;
+};
+
+type QuoteOrder = {
+  customer_name: string;
+  delivery_zone: string | null;
+  delivery_address: string | null;
+  delivery_cost: number | null;
+  subtotal: number | null;
+  total: number | null;
+  created_at: string;
+  order_items?: Array<{
+    id: number;
+    product_name: string;
+    quantity: number;
+    unit_price: number | null;
+    product_id: number | null;
+    products?: {
+      category: string | null;
+      image_url: string | null;
+    } | null;
+  }>;
+};
+
+async function getQuoteOrder(id: string) {
+  try {
+    const supabase = createSupabaseAdminClient();
+    const { data } = await supabase
+      .from("orders")
+      .select(
+        `
+        customer_name,
+        delivery_zone,
+        delivery_address,
+        delivery_cost,
+        subtotal,
+        total,
+        created_at,
+        order_items (
+          id,
+          product_id,
+          product_name,
+          quantity,
+          unit_price,
+          products (
+            category,
+            image_url
+          )
+        )
+      `,
+      )
+      .eq("code", id)
+      .single();
+
+    return data as QuoteOrder | null;
+  } catch {
+    return null;
+  }
+}
+
+function money(value: number | null | undefined) {
+  if (!value) return "Por confirmar";
+
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
 export default async function CotizacionPage({
   params,
@@ -18,12 +95,37 @@ export default async function CotizacionPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const quoteItems = products.slice(0, 4).map((product, index) => ({
-    ...product,
-    quantity: index + 1,
-  }));
-  const issueDate = "12 junio 2026";
-  const validUntil = "19 junio 2026";
+  const order = await getQuoteOrder(id);
+  const quoteItems: QuoteItem[] = order?.order_items?.length
+    ? order.order_items.map((item) => ({
+        id: item.id,
+        name: item.product_name,
+        category: item.products?.category || "Productos",
+        image: item.products?.image_url || "/brand/logo.png",
+        price: item.unit_price,
+        quantity: item.quantity,
+      }))
+    : products.slice(0, 4).map((product, index) => ({
+        ...product,
+        quantity: index + 1,
+      }));
+  const issueDateObject = order
+    ? new Date(order.created_at)
+    : new Date("2026-06-14T00:00:00-05:00");
+  const validUntilObject = new Date(issueDateObject);
+
+  validUntilObject.setDate(issueDateObject.getDate() + 7);
+
+  const issueDate = issueDateObject.toLocaleDateString("es-CO");
+  const validUntil = validUntilObject.toLocaleDateString("es-CO");
+  const subtotal =
+    order?.subtotal ??
+    quoteItems.reduce(
+      (total, item) => total + (item.price || 0) * item.quantity,
+      0,
+    );
+  const deliveryCost = order?.delivery_cost ?? null;
+  const total = order?.total ?? subtotal + (deliveryCost || 0);
 
   return (
     <main className="min-h-screen bg-[#F8FAFB] text-[#062A3E]">
@@ -67,8 +169,13 @@ export default async function CotizacionPage({
             {[
               ["Fecha", issueDate],
               ["Vigencia", validUntil],
-              ["Cliente", "Cliente demo LYM"],
-              ["Entrega", "Villavicencio / recoger en punto"],
+              ["Cliente", order?.customer_name || "Cliente LYM"],
+              [
+                "Entrega",
+                order?.delivery_address ||
+                  order?.delivery_zone ||
+                  "Villavicencio / recoger en punto",
+              ],
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg bg-[#F8FAFB] p-3">
                 <p className="text-xs font-bold uppercase text-[#617789]">
@@ -107,12 +214,12 @@ export default async function CotizacionPage({
                 </div>
                 <p className="text-sm font-bold">Cant. {item.quantity}</p>
                 <p className="text-sm font-bold text-[#FF6B35]">
-                  {item.price === null ? "Cotizar" : `$${item.price.toLocaleString("es-CO")}`}
+                  {item.price === null ? "Cotizar" : money(item.price)}
                 </p>
                 <p className="text-sm font-bold text-[#0A3D5C]">
                   {item.price === null
                     ? "Por confirmar"
-                    : `$${(item.price * item.quantity).toLocaleString("es-CO")}`}
+                    : money(item.price * item.quantity)}
                 </p>
               </div>
             ))}
@@ -130,15 +237,15 @@ export default async function CotizacionPage({
             <div className="rounded-lg border border-[#0A3D5C]/10 bg-white p-4">
               <div className="flex justify-between text-sm">
                 <span className="text-[#617789]">Subtotal confirmado</span>
-                <span className="font-bold text-[#0A3D5C]">$0</span>
+                <span className="font-bold text-[#0A3D5C]">{money(subtotal)}</span>
               </div>
               <div className="mt-2 flex justify-between text-sm">
                 <span className="text-[#617789]">Domicilio</span>
-                <span className="font-bold text-[#0A3D5C]">Por confirmar</span>
+                <span className="font-bold text-[#0A3D5C]">{money(deliveryCost)}</span>
               </div>
               <div className="mt-3 flex justify-between border-t border-[#0A3D5C]/10 pt-3 font-display text-xl font-bold">
                 <span>Total</span>
-                <span className="text-[#FF6B35]">Cotizar</span>
+                <span className="text-[#FF6B35]">{money(total)}</span>
               </div>
             </div>
           </div>
@@ -152,7 +259,7 @@ export default async function CotizacionPage({
               Ver tienda
             </Link>
             <p className="rounded-lg bg-[#F8FAFB] px-4 py-3 text-sm text-[#617789]">
-              Cotización demo. Los valores se confirman antes de pago real.
+              Los valores se confirman antes del despacho o cobro real por Wompi.
             </p>
           </div>
         </div>

@@ -25,11 +25,12 @@ import {
   ShoppingBag,
   Printer,
   Upload,
+  UsersRound,
   Trash2,
   Truck,
   X,
 } from "lucide-react";
-import { products as seedProducts, type Product } from "../products";
+import type { Product } from "../products";
 import {
   sanitizeImagePath,
   sanitizeLongText,
@@ -82,11 +83,21 @@ type AuditItem = {
   time: string;
 };
 
+type Customer = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  role: string;
+  created_at: string;
+};
+
 const navItems = [
   [LayoutDashboard, "Resumen"],
   [Boxes, "Productos"],
   [ShoppingBag, "Pedidos"],
   [Truck, "Domicilios"],
+  [UsersRound, "Clientes"],
   [BadgePercent, "Ofertas"],
   [Settings, "Ajustes"],
 ] as const;
@@ -122,69 +133,6 @@ function availabilityFromStock(stock: number) {
   if (stock === 1) return "Consultar disponibilidad";
   return "Disponible para confirmar";
 }
-
-const initialOrders: Order[] = [
-  {
-    id: "LYM-1048",
-    client: "Conjunto Reserva del Llano",
-    phone: "310 555 1948",
-    delivery: "Villavicencio norte/sur",
-    address: "Cra 22 # 18-40, Torre 3",
-    status: "Pago pendiente",
-    items: 5,
-    total: "Por definir",
-    lines: [
-      { name: "Cloro granulado al 70%", quantity: 2, unitPrice: 68000 },
-      { name: "Clarificador para piscina", quantity: 1, unitPrice: 28000 },
-      { name: "Test kit pH y cloro", quantity: 1, unitPrice: 45000 },
-      { name: "Cepillo curvo piscina", quantity: 1, unitPrice: 36000 },
-    ],
-  },
-  {
-    id: "LYM-1047",
-    client: "Hotel Campestre Azul",
-    phone: "318 400 2201",
-    delivery: "Recoger en punto",
-    address: "Punto físico Distribuciones LYM",
-    status: "Preparando",
-    items: 12,
-    total: "Por definir",
-    lines: [
-      { name: "Tabletas de cloro", quantity: 6, unitPrice: 72000 },
-      { name: "Alguicida mantenimiento", quantity: 3, unitPrice: 31000 },
-      { name: "Red recogehojas", quantity: 2, unitPrice: 42000 },
-      { name: "Boquilla de retorno", quantity: 1, unitPrice: 24000 },
-    ],
-  },
-  {
-    id: "LYM-1046",
-    client: "Casa Quinta Apiay",
-    phone: "301 760 8891",
-    delivery: "Villavicencio centro",
-    address: "Barrio Barzal, casa 18",
-    status: "En domicilio",
-    items: 3,
-    total: "Por definir",
-    lines: [
-      { name: "Bomba para piscina", quantity: 1, unitPrice: 390000 },
-      { name: "Arena sílica filtrante", quantity: 2, unitPrice: 52000 },
-    ],
-  },
-  {
-    id: "LYM-1045",
-    client: "Piscina Familiar El Barzal",
-    phone: "312 222 9088",
-    delivery: "Villavicencio centro",
-    address: "Calle 34 # 29-11",
-    status: "Entregado",
-    items: 2,
-    total: "Por definir",
-    lines: [
-      { name: "Manguera flotante", quantity: 1, unitPrice: 98000 },
-      { name: "Aspiradora manual", quantity: 1, unitPrice: 86000 },
-    ],
-  },
-];
 
 const initialZones = [
   { name: "Recoger en punto", price: "$0", state: "Disponible" },
@@ -307,20 +255,11 @@ export default function AdminPage() {
   const [section, setSection] = useState("Resumen");
   const [presentationMode, setPresentationMode] = useState(false);
   const [query, setQuery] = useState("");
-  const [adminProducts, setAdminProducts] = useState<AdminProduct[]>(
-    seedProducts.map((product) => ({
-      ...product,
-      adminPrice: "",
-      active: true,
-      featured: product.id <= 8,
-      commerceStatus: isGenericProductName(product.name)
-        ? "Depurar"
-        : "Pendiente de precio",
-    })),
-  );
-  const [orders, setOrders] = useState<Order[]>(initialOrders);
+  const [adminProducts, setAdminProducts] = useState<AdminProduct[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [zones, setZones] = useState(initialZones);
   const [offers, setOffers] = useState<Offer[]>(initialOffers);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<AdminProduct | null>(
     null,
@@ -347,7 +286,7 @@ export default function AdminPage() {
     {
       id: 1,
       action: "Sistema iniciado",
-      detail: "Panel demo listo para operar",
+      detail: "Panel conectado a base de datos",
       time: "Hoy",
     },
   ]);
@@ -384,7 +323,7 @@ export default function AdminPage() {
   ).length;
   const activeOrders = orders.filter((order) => order.status !== "Entregado");
   const activeOffers = offers.filter((offer) => offer.active).length;
-  const demoRevenue = orders.reduce((total, order) => total + getOrderTotal(order), 0);
+  const estimatedRevenue = orders.reduce((total, order) => total + getOrderTotal(order), 0);
 
   function addAudit(action: string, detail: string) {
     setAuditLog((current) => [
@@ -396,11 +335,7 @@ export default function AdminPage() {
   function getOrderLines(order: Order) {
     if (order.lines?.length) return order.lines;
 
-    return seedProducts.slice(0, Math.min(order.items, 4)).map((product, index) => ({
-      name: product.name,
-      quantity: index === 0 ? Math.max(order.items - 3, 1) : 1,
-      unitPrice: 0,
-    }));
+    return [];
   }
 
   function getOrderSubtotal(order: Order) {
@@ -414,32 +349,54 @@ export default function AdminPage() {
     return getOrderSubtotal(order) + numberFromMoney(order.deliveryCost);
   }
 
+  async function loadAdminData() {
+    const [
+      productsResponse,
+      offersResponse,
+      ordersResponse,
+      customersResponse,
+    ] = await Promise.all([
+      fetch("/api/admin/products", { cache: "no-store" }),
+      fetch("/api/admin/offers", { cache: "no-store" }),
+      fetch("/api/admin/orders", { cache: "no-store" }),
+      fetch("/api/admin/customers", { cache: "no-store" }),
+    ]);
+
+    if (productsResponse.ok) {
+      const payload = (await productsResponse.json()) as {
+        products?: AdminProduct[];
+      };
+      if (payload.products?.length) setAdminProducts(payload.products);
+    }
+
+    if (offersResponse.ok) {
+      const payload = (await offersResponse.json()) as { offers?: Offer[] };
+      if (payload.offers) setOffers(payload.offers);
+    }
+
+    if (ordersResponse.ok) {
+      const payload = (await ordersResponse.json()) as { orders?: Order[] };
+      setOrders(payload.orders || []);
+    }
+
+    if (customersResponse.ok) {
+      const payload = (await customersResponse.json()) as {
+        customers?: Customer[];
+      };
+      setCustomers(payload.customers || []);
+    }
+  }
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const savedProducts = window.localStorage.getItem(adminStorageKeys.products);
-      const savedOrders = window.localStorage.getItem(adminStorageKeys.orders);
       const savedZones = window.localStorage.getItem(adminStorageKeys.zones);
-      const savedOffers = window.localStorage.getItem(adminStorageKeys.offers);
 
-      if (savedProducts) {
-        setAdminProducts(
-          JSON.parse(savedProducts).map((product: AdminProduct) => ({
-            ...product,
-            commerceStatus:
-              product.commerceStatus ||
-              (isGenericProductName(product.name)
-                ? "Depurar"
-                : product.adminPrice
-                  ? "Publicado"
-                  : "Pendiente de precio"),
-          })),
-        );
-      }
-      if (savedOrders) setOrders(JSON.parse(savedOrders));
       if (savedZones) setZones(JSON.parse(savedZones));
-      if (savedOffers) setOffers(JSON.parse(savedOffers));
 
       setHydrated(true);
+      loadAdminData().catch(() => {
+        addAudit("Base de datos", "No se pudieron cargar productos/ofertas");
+      });
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -448,29 +405,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (!hydrated) return;
 
-    window.localStorage.setItem(
-      adminStorageKeys.products,
-      JSON.stringify(adminProducts),
-    );
-  }, [adminProducts, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-
-    window.localStorage.setItem(adminStorageKeys.orders, JSON.stringify(orders));
-  }, [orders, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-
     window.localStorage.setItem(adminStorageKeys.zones, JSON.stringify(zones));
   }, [zones, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-
-    window.localStorage.setItem(adminStorageKeys.offers, JSON.stringify(offers));
-  }, [offers, hydrated]);
 
   function openProductEditor(product?: AdminProduct) {
     setEditingProduct(
@@ -504,7 +440,7 @@ export default function AdminPage() {
     updateEditingProduct({ image: previewUrl });
   }
 
-  function saveProduct() {
+  async function saveProduct() {
     if (!editingProduct) return;
     const normalizedProduct = sanitizeAdminProduct({
       ...editingProduct,
@@ -516,15 +452,29 @@ export default function AdminPage() {
       active: editingProduct.commerceStatus !== "Oculto",
     });
 
+    const response = await fetch("/api/admin/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(normalizedProduct),
+    });
+
+    if (!response.ok) {
+      window.alert("No se pudo guardar el producto en la base de datos.");
+      return;
+    }
+
+    const payload = (await response.json()) as { product: AdminProduct };
+
     setAdminProducts((current) => {
+      const savedProduct = payload.product;
       const exists = current.some((product) => product.id === normalizedProduct.id);
       if (exists) {
         return current.map((product) =>
-          product.id === normalizedProduct.id ? normalizedProduct : product,
+          product.id === normalizedProduct.id ? savedProduct : product,
         );
       }
 
-      return [normalizedProduct, ...current];
+      return [savedProduct, ...current];
     });
     addAudit("Producto guardado", normalizedProduct.name);
     setEditorOpen(false);
@@ -573,8 +523,8 @@ export default function AdminPage() {
       const [, ...rows] = text.split(/\r?\n/).filter(Boolean);
       let updated = 0;
 
-      setAdminProducts((current) =>
-        current.map((product) => {
+      setAdminProducts((current) => {
+        const nextProducts = current.map((product) => {
           const row = rows
             .map(parseCsvLine)
             .find(
@@ -606,51 +556,79 @@ export default function AdminPage() {
             active: cleanStatus !== "Oculto",
             image: image ? sanitizeImagePath(image) : product.image,
           };
-        }),
-      );
+        });
+
+        fetch("/api/admin/products", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ products: nextProducts }),
+        })
+          .then(async (response) => {
+            if (!response.ok) throw new Error("No se pudo importar CSV.");
+            const payload = (await response.json()) as {
+              products?: AdminProduct[];
+            };
+            if (payload.products) setAdminProducts(payload.products);
+          })
+          .catch(() => {
+            window.alert("No se pudo guardar el CSV en la base de datos.");
+          });
+
+        return nextProducts;
+      });
       addAudit("CSV importado", `${updated} productos actualizados`);
       event.target.value = "";
     };
     reader.readAsText(file);
   }
 
-  function fillDemoPrices() {
-    setAdminProducts((current) =>
-      current.map((product, index) => ({
+  async function fillProvisionalPrices() {
+    const nextProducts = adminProducts.map((product, index) => ({
         ...product,
         adminPrice:
           product.adminPrice || String(18000 + ((index % 12) + 1) * 7000),
         commerceStatus: "Publicado",
-      })),
-    );
-    addAudit("Precios demo", "Se completaron precios de prueba");
+      }));
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ products: nextProducts }),
+    });
+
+    if (!response.ok) {
+      window.alert("No se pudieron guardar los precios sugeridos.");
+      return;
+    }
+
+    const payload = (await response.json()) as { products?: AdminProduct[] };
+    setAdminProducts(payload.products || nextProducts);
+    addAudit("Precios sugeridos", "Se completaron precios faltantes en base");
   }
 
-  function resetDemo() {
-    setAdminProducts(
-      seedProducts.map((product) => ({
-        ...product,
-        adminPrice: "",
-        active: true,
-        featured: product.id <= 8,
-        commerceStatus: isGenericProductName(product.name)
-          ? "Depurar"
-          : "Pendiente de precio",
-      })),
-    );
-    setOrders(initialOrders);
+  function reloadDatabase() {
+    loadAdminData();
     setZones(initialZones);
-    setOffers(initialOffers);
     setLastDeliveryId("");
-    window.localStorage.removeItem(adminStorageKeys.products);
-    window.localStorage.removeItem(adminStorageKeys.orders);
     window.localStorage.removeItem(adminStorageKeys.zones);
-    window.localStorage.removeItem(adminStorageKeys.offers);
+    addAudit("Base de datos", "Productos, ofertas y pedidos recargados");
   }
 
-  function updateOrderStatus(orderId: string, status: string) {
+  async function updateOrderStatus(orderId: string, status: string) {
+    const response = await fetch("/api/admin/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: orderId, status }),
+    });
+
+    if (!response.ok) {
+      window.alert("No se pudo actualizar el pedido en la base de datos.");
+      return;
+    }
+
+    const payload = (await response.json()) as { order: Order };
     setOrders((current) =>
-      current.map((order) => (order.id === orderId ? { ...order, status } : order)),
+      current.map((order) => (order.id === orderId ? payload.order : order)),
     );
     addAudit("Estado actualizado", `${orderId} cambió a ${status}`);
   }
@@ -680,7 +658,7 @@ export default function AdminPage() {
     }));
   }
 
-  function saveDeliveryAssignment() {
+  async function saveDeliveryAssignment() {
     if (!deliveryOrder) return;
     const cleanDeliveryDraft = {
       ...deliveryDraft,
@@ -691,20 +669,24 @@ export default function AdminPage() {
       notes: sanitizeLongText(deliveryDraft.notes, 300),
     };
 
+    const response = await fetch("/api/admin/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: deliveryOrder.id,
+        delivery: cleanDeliveryDraft,
+      }),
+    });
+
+    if (!response.ok) {
+      window.alert("No se pudo guardar el domicilio en la base de datos.");
+      return;
+    }
+
+    const payload = (await response.json()) as { order: Order };
     setOrders((current) =>
       current.map((order) =>
-        order.id === deliveryOrder.id
-          ? {
-              ...order,
-              delivery: cleanDeliveryDraft.zone,
-              address: cleanDeliveryDraft.address,
-              status: "En domicilio",
-              courier: cleanDeliveryDraft.courier,
-              deliveryCost: cleanDeliveryDraft.cost,
-              deliveryWindow: cleanDeliveryDraft.window,
-              deliveryNotes: cleanDeliveryDraft.notes,
-            }
-          : order,
+        order.id === deliveryOrder.id ? payload.order : order,
       ),
     );
     setLastDeliveryId(deliveryOrder.id);
@@ -712,12 +694,8 @@ export default function AdminPage() {
     setDeliveryOrder(null);
   }
 
-  function markOrderDelivered(orderId: string) {
-    setOrders((current) =>
-      current.map((order) =>
-        order.id === orderId ? { ...order, status: "Entregado" } : order,
-      ),
-    );
+  async function markOrderDelivered(orderId: string) {
+    await updateOrderStatus(orderId, "Entregado");
   }
 
   function whatsappDeliveryUrl(order: Order) {
@@ -734,7 +712,7 @@ export default function AdminPage() {
     return `https://wa.me/${colombiaPhone}?text=${encodeURIComponent(message)}`;
   }
 
-  function addOffer() {
+  async function addOffer() {
     const cleanOffer = {
       title: sanitizeText(offerDraft.title, { maxLength: 100 }),
       target: sanitizeText(offerDraft.target, { maxLength: 140 }),
@@ -743,16 +721,24 @@ export default function AdminPage() {
 
     if (!cleanOffer.title) return;
 
-    setOffers((current) => [
-      {
-        id: current.length + 1,
+    const response = await fetch("/api/admin/offers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         title: cleanOffer.title,
         target: cleanOffer.target || "Toda la tienda",
         discount: cleanOffer.discount || "Por definir",
         active: true,
-      },
-      ...current,
-    ]);
+      }),
+    });
+
+    if (!response.ok) {
+      window.alert("No se pudo crear la oferta en la base de datos.");
+      return;
+    }
+
+    const payload = (await response.json()) as { offer: Offer };
+    setOffers((current) => [payload.offer, ...current]);
     setOfferDraft({ title: "", target: "", discount: "" });
     setOfferTargetFocused(false);
     addAudit("Oferta creada", cleanOffer.title);
@@ -802,12 +788,12 @@ export default function AdminPage() {
                 <Plus className="size-4" />
                 Nuevo producto
               </button>
-              <button
-                onClick={fillDemoPrices}
+            <button
+                onClick={fillProvisionalPrices}
                 className="flex h-10 items-center justify-center gap-2 rounded-lg border border-[#0A3D5C]/12 bg-white px-4 text-sm font-bold text-[#0A3D5C]"
               >
                 <Save className="size-4" />
-                Precios demo
+                Completar precios
               </button>
               <button
                 onClick={downloadPriceTemplate}
@@ -1246,7 +1232,18 @@ export default function AdminPage() {
                     </p>
                   </div>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      const nextOffer = { ...offer, active: !offer.active };
+                      const response = await fetch("/api/admin/offers", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(nextOffer),
+                      });
+                      if (!response.ok) {
+                        window.alert("No se pudo actualizar la oferta.");
+                        return;
+                      }
+                      const payload = (await response.json()) as { offer: Offer };
                       addAudit(
                         offer.active ? "Oferta pausada" : "Oferta activada",
                         offer.title,
@@ -1254,7 +1251,7 @@ export default function AdminPage() {
                       setOffers((current) =>
                         current.map((item) =>
                           item.id === offer.id
-                            ? { ...item, active: !item.active }
+                            ? payload.offer
                             : item,
                         ),
                       );
@@ -1269,6 +1266,66 @@ export default function AdminPage() {
                   </button>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (section === "Clientes") {
+      return (
+        <div className="rounded-lg border border-[#0A3D5C]/10 bg-white p-4 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase text-[#00B4D8]">
+                Clientes
+              </p>
+              <h2 className="font-display text-2xl font-bold">
+                Usuarios registrados
+              </h2>
+              <p className="mt-1 text-sm text-[#617789]">
+                {customers.length} cuentas creadas en Supabase Auth
+              </p>
+            </div>
+            <UsersRound className="size-7 text-[#FF6B35]" />
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-[#0A3D5C]/10">
+            <div className="hidden grid-cols-[1fr_220px_140px_140px] bg-[#F8FAFB] px-3 py-2 text-xs font-bold uppercase text-[#617789] md:grid">
+              <span>Cliente</span>
+              <span>Correo</span>
+              <span>Teléfono</span>
+              <span>Rol</span>
+            </div>
+            <div className="divide-y divide-[#0A3D5C]/10">
+              {customers.length ? (
+                customers.map((customer) => (
+                  <div
+                    key={customer.id}
+                    className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_220px_140px_140px] md:items-center"
+                  >
+                    <div>
+                      <p className="font-bold text-[#0A3D5C]">
+                        {customer.full_name}
+                      </p>
+                      <p className="text-xs text-[#617789]">
+                        Creado {new Date(customer.created_at).toLocaleDateString("es-CO")}
+                      </p>
+                    </div>
+                    <p className="text-sm text-[#36586C]">{customer.email}</p>
+                    <p className="text-sm text-[#36586C]">
+                      {customer.phone || "Sin teléfono"}
+                    </p>
+                    <span className="w-fit rounded-md bg-[#EAF8FC] px-2 py-1 text-xs font-bold uppercase text-[#0084A3]">
+                      {customer.role}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="p-6 text-sm text-[#617789]">
+                  Todavía no hay usuarios registrados desde la tienda.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1305,7 +1362,7 @@ export default function AdminPage() {
       <div className="space-y-5">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {[
-            [BarChart3, "Ventas demo", moneyFromNumber(demoRevenue), "Pedidos con valores simulados"],
+            [BarChart3, "Ventas estimadas", moneyFromNumber(estimatedRevenue), "Pedidos registrados"],
             [PackageCheck, "Pedidos activos", String(activeOrders.length), "Requieren seguimiento"],
             [FileText, "Sin precio", String(pendingPrices), "Completar antes de vender"],
             [BadgePercent, "Ofertas activas", String(activeOffers), "Promociones visibles"],
@@ -1529,7 +1586,7 @@ export default function AdminPage() {
           <div className="mx-4 mb-4 hidden rounded-lg bg-[#F8FAFB] p-3 text-sm text-[#617789] lg:block">
             <p className="font-bold text-[#0A3D5C]">Modo visual</p>
             <p className="mt-1">
-              Cambios simulados en memoria. Después se guardan en Supabase.
+              Productos y ofertas se leen y guardan en Supabase.
             </p>
           </div>
         </aside>
@@ -1555,10 +1612,10 @@ export default function AdminPage() {
                   Ver tienda
                 </Link>
                 <button
-                  onClick={resetDemo}
+                  onClick={reloadDatabase}
                   className="hidden h-10 items-center gap-2 rounded-lg border border-[#0A3D5C]/12 bg-white px-4 text-sm font-bold text-[#0A3D5C] sm:flex"
                 >
-                  Restaurar demo
+                  Recargar base
                 </button>
                 <button
                   onClick={() => setPresentationMode((current) => !current)}
@@ -1628,9 +1685,9 @@ export default function AdminPage() {
                     Editor
                   </p>
                   <h2 className="font-display text-2xl font-bold">
-                    {editingProduct.id > seedProducts.length
-                      ? "Nuevo producto"
-                      : "Editar producto"}
+                    {adminProducts.some((product) => product.id === editingProduct.id)
+                      ? "Editar producto"
+                      : "Nuevo producto"}
                   </h2>
                 </div>
                 <button
@@ -1781,10 +1838,10 @@ export default function AdminPage() {
                     Carga masiva de imágenes
                   </p>
                   <p className="mt-2 text-sm leading-6 text-[#617789]">
-                    Para esta demo, guarda imágenes en <span className="font-bold">public/products</span>,
+                    Guarda imágenes en <span className="font-bold">public/products</span>,
                     descarga la plantilla CSV, pega la ruta en la columna Imagen
                     usando formato <span className="font-bold">/products/nombre.png</span> e importa el CSV.
-                    En producción este paso se conectará a Supabase Storage.
+                    Luego conectaremos este paso a Supabase Storage para subir archivos desde el panel.
                   </p>
                 </div>
 
@@ -1834,7 +1891,15 @@ export default function AdminPage() {
                 </div>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    const response = await fetch(
+                      `/api/admin/products?id=${editingProduct.id}`,
+                      { method: "DELETE" },
+                    );
+                    if (!response.ok) {
+                      window.alert("No se pudo eliminar el producto.");
+                      return;
+                    }
                     setAdminProducts((current) =>
                       current.filter((product) => product.id !== editingProduct.id),
                     );

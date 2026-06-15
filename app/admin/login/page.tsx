@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { KeyRound, Loader2, ShieldCheck, UserRound } from "lucide-react";
+import { createSupabaseBrowserClient } from "../../supabase/browser";
 import { ThemeToggle } from "../../theme-toggle";
 
 export default function AdminLoginPage() {
@@ -18,10 +19,28 @@ export default function AdminLoginPage() {
     setLoading(true);
     setError("");
 
+    let body: Record<string, string> = { username, password };
+
+    if (username.includes("@")) {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: username.trim(),
+        password,
+      });
+
+      if (authError || !data.session?.access_token) {
+        setError(authError?.message || "No se pudo iniciar sesión.");
+        setLoading(false);
+        return;
+      }
+
+      body = { accessToken: data.session.access_token };
+    }
+
     const response = await fetch("/api/admin/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -78,7 +97,7 @@ export default function AdminLoginPage() {
             Ingresar al panel
           </h2>
           <p className="mt-2 text-sm leading-6 text-[#617789]">
-            Usa las credenciales configuradas para el administrador.
+            Usa el usuario admin configurado o un correo con rol admin en Supabase.
           </p>
 
           <label className="mt-5 flex h-12 items-center gap-3 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-3">
@@ -90,7 +109,7 @@ export default function AdminLoginPage() {
                 if (event.key === "Enter") submitLogin();
               }}
               type="text"
-              placeholder="Usuario"
+              placeholder="Usuario o correo admin"
               autoComplete="username"
               className="h-full w-full bg-transparent text-sm outline-none"
             />

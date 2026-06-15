@@ -57,7 +57,7 @@ export default function OfertasPage() {
       return {
         ...product,
         discount: matchingOffer?.discount || "Oferta",
-        note: matchingOffer?.title || "Promoción demo administrable",
+        note: matchingOffer?.title || "Promoción administrable",
       };
     });
   }, [activeOffers]);

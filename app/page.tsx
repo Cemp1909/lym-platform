@@ -2,8 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { categories, products, type Product } from "./products";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Product } from "./products";
 import { FloatingWhatsApp } from "./floating-whatsapp";
 import { ThemeToggle } from "./theme-toggle";
 import {
@@ -12,6 +12,7 @@ import {
   sanitizePhone,
   sanitizeText,
 } from "./security/sanitize";
+import { createSupabaseBrowserClient } from "./supabase/browser";
 import { whatsappMessages, whatsappUrl } from "./whatsapp";
 import {
   ArrowLeft,
@@ -77,6 +78,25 @@ const paymentMethods = [
 const currentUserStorageKey = "lym-current-user";
 const brandOptions = ["Todas", "LYM", "AquaClear", "PiscinaPro", "PoolTech"];
 
+type CustomerSession = {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  sessionToken: string;
+  role?: string;
+  authenticatedAt?: string;
+};
+
+type CustomerOrder = {
+  id: string;
+  status: string;
+  eta?: string;
+  address: string;
+  total: string;
+  items: number;
+};
+
 function money(value: number) {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -115,27 +135,6 @@ function availabilityLabel(stock: number) {
 
 const featuredProductIds = [1, 2, 4, 8];
 
-function createSessionToken() {
-  const values = new Uint32Array(4);
-  window.crypto.getRandomValues(values);
-
-  return Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("");
-}
-
-async function createPasswordToken(email: string, password: string) {
-  const encoder = new TextEncoder();
-  const normalizedEmail = email.trim().toLowerCase();
-  const source = `lym-demo-v1:${normalizedEmail}:${password}`;
-  const digest = await window.crypto.subtle.digest(
-    "SHA-256",
-    encoder.encode(source),
-  );
-
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
 function sanitizeLoginIdentifier(value: string) {
   return value
     .trim()
@@ -144,6 +143,7 @@ function sanitizeLoginIdentifier(value: string) {
 }
 
 export default function Home() {
+  const [storeProducts, setStoreProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [advisorProblem, setAdvisorProblem] = useState("");
@@ -158,7 +158,12 @@ export default function Home() {
   const [isClientPanelOpen, setIsClientPanelOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isQuoteOpen, setIsQuoteOpen] = useState(false);
-  const [trackingCode] = useState("LYM-1048");
+  const [trackingCode, setTrackingCode] = useState("");
+  const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([]);
+  const [confirmedOrder, setConfirmedOrder] = useState<CustomerOrder | null>(
+    null,
+  );
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [cart, setCart] = useState<Record<number, number>>({});
   const [zone, setZone] = useState(zones[1].name);
   const [deliveryDetails, setDeliveryDetails] = useState({
@@ -168,10 +173,7 @@ export default function Home() {
     neighborhood: "",
     notes: "",
   });
-  const [currentUser, setCurrentUser] = useState<{
-    name: string;
-    email: string;
-  } | null>(null);
+  const [currentUser, setCurrentUser] = useState<CustomerSession | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [authIntent, setAuthIntent] = useState<"account" | "checkout">(
@@ -188,9 +190,21 @@ export default function Home() {
     "cart",
   );
   const [paymentMethod, setPaymentMethod] = useState(paymentMethods[0].id);
+  const [authError, setAuthError] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+
+  const dynamicCategories = useMemo(
+    () => [
+      "Todos",
+      ...Array.from(
+        new Set(storeProducts.map((product) => product.category)),
+      ).sort(),
+    ],
+    [storeProducts],
+  );
 
   const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
+    return storeProducts.filter((product) => {
       const matchesCategory =
         category === "Todos" || product.category === category;
       const matchesQuery = product.name
@@ -215,16 +229,24 @@ export default function Home() {
         matchesBrand
       );
     });
-  }, [availabilityFilter, brandFilter, category, favorites, priceFilter, query]);
+  }, [
+    availabilityFilter,
+    brandFilter,
+    category,
+    favorites,
+    priceFilter,
+    query,
+    storeProducts,
+  ]);
   const searchSuggestions = query.trim()
-    ? products
+    ? storeProducts
         .filter((product) =>
           product.name.toLowerCase().includes(query.trim().toLowerCase()),
         )
         .slice(0, 5)
-    : products.slice(0, 5);
+    : storeProducts.slice(0, 5);
 
-  const cartItems = products
+  const cartItems = storeProducts
     .filter((product) => cart[product.id])
     .map((product) => ({ ...product, quantity: cart[product.id] }));
   const hasPendingPrices = cartItems.some((item) => item.price === null);
@@ -239,15 +261,19 @@ export default function Home() {
   const isPickup = zone === "Recoger en punto";
   const displayName =
     currentUser?.name || currentUser?.email.split("@")[0] || "Cliente";
-  const favoriteProducts = products.filter((product) => favorites[product.id]);
-  const trackedOrder = {
-    id: trackingCode || "LYM-1048",
-    status: "Preparando pedido",
-    eta: "Hoy, 2:00 p.m. - 6:00 p.m.",
-    address: deliveryDetails.address || "Dirección pendiente por confirmar",
-  };
+  const favoriteProducts = storeProducts.filter((product) => favorites[product.id]);
+  const trackedOrder =
+    confirmedOrder ||
+    customerOrders[0] || {
+      id: trackingCode || "Sin pedidos",
+      status: "Arma tu primer pedido",
+      eta: "Pendiente",
+      address: deliveryDetails.address || "Dirección pendiente por confirmar",
+      total: "Por definir",
+      items: 0,
+    };
   const relatedProducts = selectedProduct
-    ? products
+    ? storeProducts
         .filter(
           (product) =>
             product.category === selectedProduct.category &&
@@ -255,59 +281,173 @@ export default function Home() {
         )
         .slice(0, 3)
     : [];
-  const compareProducts = products.filter((product) =>
+  const compareProducts = storeProducts.filter((product) =>
     compareIds.includes(product.id),
   );
   const featuredProducts = featuredProductIds
-    .map((id) => products.find((product) => product.id === id))
+    .map((id) => storeProducts.find((product) => product.id === id))
     .filter((product): product is Product => Boolean(product));
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const savedUser = window.localStorage.getItem(currentUserStorageKey);
+  const getAccessToken = useCallback(async () => {
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase.auth.getSession();
 
-      if (savedUser) {
-        setCurrentUser(JSON.parse(savedUser));
-      }
-    }, 0);
-
-    return () => window.clearTimeout(timer);
+    return data.session?.access_token || "";
   }, []);
 
-  function openAuth(mode: "login" | "register" = "register") {
-    setAuthMode(mode);
-    setAuthIntent("account");
-    setIsAuthOpen(true);
-  }
+  const loadCurrentSupabaseUser = useCallback(async () => {
+    const accessToken = await getAccessToken();
 
-  async function submitAuth() {
-    const loginIdentifier = sanitizeLoginIdentifier(authForm.email);
+    if (!accessToken) {
+      window.localStorage.removeItem(currentUserStorageKey);
+      setCurrentUser(null);
+      return;
+    }
 
-    const fallbackName = authMode === "login" ? "Cliente LYM" : "Cliente";
-    const email = sanitizeEmail(loginIdentifier) || "cliente@demo.com";
-    const passwordToken = authForm.password
-      ? await createPasswordToken(email, authForm.password)
-      : null;
+    const response = await fetch("/api/account/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+
+    if (!response.ok) return;
+
+    const payload = (await response.json()) as { user?: CustomerSession };
+    if (!payload.user) return;
 
     const nextUser = {
-      name: sanitizeText(authForm.name, { maxLength: 80 }) || fallbackName,
-      email,
-      phone: sanitizePhone(authForm.phone),
-      sessionToken: createSessionToken(),
-      passwordToken,
-      tokenVersion: "demo-sha256-v1",
+      ...payload.user,
+      sessionToken: payload.user.id,
       authenticatedAt: new Date().toISOString(),
     };
 
     setCurrentUser(nextUser);
     window.localStorage.setItem(currentUserStorageKey, JSON.stringify(nextUser));
-    setAuthForm((current) => ({ ...current, password: "" }));
-    setIsAuthOpen(false);
-    if (authIntent === "checkout") {
-      setIsCartOpen(true);
-      setPaymentStep("wompi");
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadCurrentSupabaseUser().catch(() => setCurrentUser(null));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadCurrentSupabaseUser]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProducts() {
+      const response = await fetch("/api/products", { cache: "no-store" });
+      if (!response.ok) return;
+
+      const payload = (await response.json()) as { products?: Product[] };
+      if (!cancelled && payload.products?.length) {
+        setStoreProducts(payload.products);
+      }
     }
+
+    loadProducts().catch(() => setStoreProducts([]));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadCustomerOrders = useCallback(async (customerToken: string) => {
+    const accessToken = await getAccessToken();
+    const response = await fetch(
+      accessToken
+        ? "/api/orders"
+        : `/api/orders?customerToken=${encodeURIComponent(customerToken)}`,
+      {
+        cache: "no-store",
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      },
+    );
+
+    if (!response.ok) return;
+
+    const payload = (await response.json()) as { orders?: CustomerOrder[] };
+    setCustomerOrders(payload.orders || []);
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    if (!currentUser?.sessionToken) return;
+
+    const timer = window.setTimeout(() => {
+      loadCustomerOrders(currentUser.sessionToken).catch(() => {
+        setCustomerOrders([]);
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [currentUser?.sessionToken, loadCustomerOrders]);
+
+  function openAuth(mode: "login" | "register" = "register") {
+    setAuthMode(mode);
     setAuthIntent("account");
+    setAuthError("");
+    setIsAuthOpen(true);
+  }
+
+  async function submitAuth() {
+    if (isAuthSubmitting) return;
+
+    setIsAuthSubmitting(true);
+    setAuthError("");
+
+    const loginIdentifier = sanitizeLoginIdentifier(authForm.email);
+    const email = sanitizeEmail(loginIdentifier);
+    const supabase = createSupabaseBrowserClient();
+
+    try {
+      if (!email) {
+        throw new Error("Ingresa un correo válido.");
+      }
+
+      if (authMode === "register") {
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: authForm.name,
+            email,
+            phone: authForm.phone,
+            password: authForm.password,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(payload?.error || "No se pudo crear la cuenta.");
+        }
+      }
+
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email,
+        password: authForm.password,
+      });
+
+      if (loginError) throw loginError;
+
+      await loadCurrentSupabaseUser();
+      setAuthForm((current) => ({ ...current, password: "" }));
+      setIsAuthOpen(false);
+      if (authIntent === "checkout") {
+        setIsCartOpen(true);
+        setPaymentStep("wompi");
+      }
+      setAuthIntent("account");
+    } catch (error) {
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo iniciar sesión.",
+      );
+    } finally {
+      setIsAuthSubmitting(false);
+    }
   }
 
   function addProduct(id: number) {
@@ -356,6 +496,58 @@ export default function Home() {
     }
 
     setPaymentStep("wompi");
+  }
+
+  async function createOrderFromCart() {
+    if (!currentUser || !cartItems.length || isCreatingOrder) return;
+
+    setIsCreatingOrder(true);
+
+    try {
+      const accessToken = await getAccessToken();
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({
+          customerToken: currentUser.sessionToken,
+          customerName: currentUser.name || displayName,
+          customerEmail: currentUser.email,
+          customerPhone: deliveryDetails.phone || currentUser.phone || "",
+          deliveryMethod: isPickup ? "pickup" : "delivery",
+          deliveryAddress: isPickup
+            ? "Punto físico Distribuciones LYM"
+            : deliveryDetails.address,
+          deliveryZone: zone,
+          deliveryNotes: deliveryDetails.notes,
+          deliveryCost: shipping,
+          subtotal,
+          total,
+          paymentMethod,
+          items: cartItems.map((item) => ({
+            productId: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.price,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        window.alert("No se pudo guardar el pedido en la base de datos.");
+        return;
+      }
+
+      const payload = (await response.json()) as { order: CustomerOrder };
+      setConfirmedOrder(payload.order);
+      setTrackingCode(payload.order.id);
+      setCustomerOrders((current) => [payload.order, ...current]);
+      setPaymentStep("approved");
+    } finally {
+      setIsCreatingOrder(false);
+    }
   }
 
   function updateQuantity(id: number, nextQuantity: number) {
@@ -455,9 +647,13 @@ export default function Home() {
                 <button
                   onClick={() => {
                     setCurrentUser(null);
+                    createSupabaseBrowserClient().auth.signOut();
                     window.localStorage.removeItem(currentUserStorageKey);
                     setIsCartOpen(false);
                     setCart({});
+                    setCustomerOrders([]);
+                    setConfirmedOrder(null);
+                    setTrackingCode("");
                   }}
                   className="ml-1 flex size-6 items-center justify-center rounded-md text-[#617789] hover:bg-[#F8FAFB]"
                   aria-label="Cerrar sesión"
@@ -589,8 +785,8 @@ export default function Home() {
               <div className="relative flex h-full flex-col justify-between rounded-lg bg-white p-4 shadow-xl">
                 <div className="relative h-36">
                   <Image
-                    src={products[0].image}
-                    alt={products[0].name}
+                    src={storeProducts[0]?.image || "/brand/logo.png"}
+                    alt={storeProducts[0]?.name || "Producto destacado LYM"}
                     fill
                     sizes="320px"
                     className="object-contain"
@@ -602,7 +798,7 @@ export default function Home() {
                     Producto destacado
                   </p>
                   <p className="mt-1 line-clamp-2 font-display text-lg font-bold text-[#0A3D5C]">
-                    {products[0].name}
+                    {storeProducts[0]?.name || "Producto destacado"}
                   </p>
                 </div>
               </div>
@@ -676,7 +872,7 @@ export default function Home() {
 
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-4">
             {[
-              [ShieldCheck, "Pago seguro", "Wompi en modo demo"],
+              [ShieldCheck, "Pago seguro", "Pedido guardado en base"],
               [Truck, "Domicilio local", "Tarifa por zona"],
               [MessageCircle, "Asesoría", "Compra por WhatsApp"],
               [ReceiptText, "Remisión", "Cotización imprimible"],
@@ -707,7 +903,7 @@ export default function Home() {
                 Compra productos para tu piscina
               </h2>
               <p className="mt-1 text-sm text-[#617789]">
-                {filteredProducts.length} productos visibles de {products.length}
+                {filteredProducts.length} productos visibles de {storeProducts.length}
               </p>
             </div>
             <label className="flex h-12 w-full items-center gap-3 rounded-lg border border-[#0A3D5C]/12 bg-[#F8FAFB] px-4 lg:max-w-xl">
@@ -773,7 +969,7 @@ export default function Home() {
               </a>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {categories.map((item) => (
+              {dynamicCategories.map((item) => (
                 <button
                   key={item}
                   onClick={() => setCategory(item)}
@@ -1004,7 +1200,7 @@ export default function Home() {
               ],
               [
                 "¿El pago Wompi ya cobra?",
-                "Por ahora está en modo prueba visual. La conexión real se activa en producción.",
+                "La tienda guarda el pedido en la base de datos. La conexión de cobro real con Wompi se activa al pasar a producción.",
               ],
             ].map(([question, answer]) => (
               <div
@@ -1227,7 +1423,7 @@ export default function Home() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase text-[#00B4D8]">
-                  Asesor virtual demo
+                  Asesor virtual
                 </p>
                 <h2 className="font-display text-3xl font-bold">
                   ¿Qué necesita tu piscina?
@@ -1380,11 +1576,10 @@ export default function Home() {
               <div className="rounded-lg border border-[#0A3D5C]/10 bg-white p-4">
                 <p className="font-display text-lg font-bold">Mis cotizaciones</p>
                 <p className="mt-2 text-sm leading-6 text-[#617789]">
-                  Consulta una remisión demo con productos, cantidades y estado
-                  antes de conectar la base de datos.
+                  Consulta tus pedidos guardados con productos, cantidades y estado.
                 </p>
                 <Link
-                  href="/cotizacion/LYM-DEMO-0001"
+                  href={`/cotizacion/${trackedOrder.id}`}
                   className="mt-3 flex h-10 items-center justify-center rounded-lg bg-[#0A3D5C] text-sm font-bold text-white"
                 >
                   Ver cotización
@@ -1399,7 +1594,9 @@ export default function Home() {
                 </p>
                 <button
                   onClick={() => {
-                    products.slice(0, 3).forEach((product) => addProduct(product.id));
+                    storeProducts
+                      .slice(0, 3)
+                      .forEach((product) => addProduct(product.id));
                     setIsClientPanelOpen(false);
                     setIsCartOpen(true);
                   }}
@@ -1415,34 +1612,30 @@ export default function Home() {
               <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
                 <div>
                   <p className="text-xs font-bold uppercase text-[#00B4D8]">
-                    Historial demo
+                    Historial
                   </p>
                   <h3 className="font-display text-xl font-bold">
                     Pedidos y cotizaciones recientes
                   </h3>
                 </div>
                 <Link
-                  href="/estado-pedido?pedido=LYM-1048"
+                  href={`/estado-pedido?pedido=${encodeURIComponent(trackedOrder.id)}`}
                   className="text-sm font-bold text-[#0A3D5C] hover:text-[#FF6B35]"
                 >
                   Ver seguimiento
                 </Link>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
-                {[
-                  ["LYM-1048", "Preparando", "5 productos"],
-                  ["LYM-1047", "Listo para recoger", "12 productos"],
-                  ["LYM-DEMO-0001", "Cotización enviada", "4 productos"],
-                ].map(([id, status, items]) => (
+                {(customerOrders.length ? customerOrders : [trackedOrder]).map((order) => (
                   <Link
-                    key={id}
-                    href={id.startsWith("LYM-DEMO") ? `/cotizacion/${id}` : `/estado-pedido?pedido=${id}`}
+                    key={order.id}
+                    href={`/estado-pedido?pedido=${encodeURIComponent(order.id)}`}
                     className="rounded-lg border border-[#0A3D5C]/10 bg-[#F8FAFB] p-3 transition hover:border-[#00B4D8]/40"
                   >
-                    <p className="font-display text-lg font-bold">{id}</p>
-                    <p className="mt-1 text-sm text-[#617789]">{status}</p>
+                    <p className="font-display text-lg font-bold">{order.id}</p>
+                    <p className="mt-1 text-sm text-[#617789]">{order.status}</p>
                     <p className="mt-2 text-xs font-bold uppercase text-[#00B4D8]">
-                      {items}
+                      {order.items} productos
                     </p>
                   </Link>
                 ))}
@@ -1578,7 +1771,7 @@ export default function Home() {
                         Distribuciones LYM
                       </p>
                       <p className="text-sm text-[#617789]">
-                        Cotización generada en tienda demo
+                        Cotización generada en tienda LYM
                       </p>
                     </div>
                   </div>
@@ -1807,27 +2000,35 @@ export default function Home() {
 
               <button
                 onClick={submitAuth}
-                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#FF6B35] text-sm font-bold text-white shadow-lg shadow-orange-950/15 transition hover:bg-[#F45F28]"
+                disabled={isAuthSubmitting || !authForm.email || !authForm.password}
+                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#FF6B35] text-sm font-bold text-white shadow-lg shadow-orange-950/15 transition enabled:hover:bg-[#F45F28] disabled:cursor-not-allowed disabled:bg-[#C6D0D6]"
               >
                 {authMode === "register" ? (
                   <>
                     <UserPlus className="size-4" />
-                    {authIntent === "checkout"
+                    {isAuthSubmitting
+                      ? "Creando cuenta..."
+                      : authIntent === "checkout"
                       ? "Crear cuenta y pagar"
                       : "Crear cuenta y continuar"}
                   </>
                 ) : (
                   <>
                     <LockKeyhole className="size-4" />
-                    Ingresar y continuar
+                    {isAuthSubmitting ? "Ingresando..." : "Ingresar y continuar"}
                   </>
                 )}
               </button>
 
+              {authError ? (
+                <div className="mt-3 rounded-lg border border-[#FFD4C4] bg-[#FFF4EF] px-3 py-2 text-sm font-bold text-[#C2441A]">
+                  {authError}
+                </div>
+              ) : null}
+
               <div className="mt-4 rounded-lg border border-[#0A3D5C]/10 bg-[#F8FAFB] p-3 text-sm text-[#617789]">
-                Demo visual: la contraseña no se guarda como texto. Se convierte
-                en un token local de prueba; en producción lo manejará Supabase
-                Auth.
+                La cuenta se crea en Supabase Auth y el perfil queda asociado a
+                la tabla de clientes para pedidos, domicilios e historial.
               </div>
             </div>
           </div>
@@ -1854,8 +2055,8 @@ export default function Home() {
                     {paymentStep === "cart"
                       ? "Tu pedido"
                       : paymentStep === "wompi"
-                        ? "Wompi modo prueba"
-                        : "Pago aprobado"}
+                        ? "Checkout Wompi"
+                        : "Pedido creado"}
                   </h2>
                 </div>
               </div>
@@ -1870,9 +2071,8 @@ export default function Home() {
 
             <div className="overflow-y-auto p-4 sm:p-6">
               <div className="mb-4 rounded-lg border border-[#00B4D8]/18 bg-[#EAF8FC] p-3 text-sm text-[#36586C]">
-                <span className="font-bold text-[#0A3D5C]">Modo demo:</span>{" "}
-                esta experiencia no realiza cobros reales ni guarda pedidos en
-                base de datos todavía.
+                <span className="font-bold text-[#0A3D5C]">Base de datos activa:</span>{" "}
+                al aprobar se crea un pedido real para seguimiento administrativo.
               </div>
               <div className="mb-4 grid gap-2 sm:grid-cols-3">
                 {[
@@ -2134,21 +2334,22 @@ export default function Home() {
                         Checkout seguro
                       </p>
                       <h3 className="mt-2 font-display text-3xl font-bold">
-                        Así se verá la pasarela Wompi antes de pagar.
+                        Checkout listo para conectar Wompi.
                       </h3>
                       <p className="mt-3 text-sm leading-6 text-cyan-50/82">
-                        En producción este paso abre la sesión real de Wompi con
-                        el valor exacto, referencia del pedido y retorno a LYM.
+                        Este paso guarda el pedido con su referencia, productos y
+                        entrega. La pasarela real de Wompi reemplazará este botón
+                        cuando estén las llaves de producción.
                       </p>
                       <div className="mt-5 rounded-lg border border-white/14 bg-white/10 p-4">
                         <div className="flex items-center gap-2 font-bold">
                           <ReceiptText className="size-4 text-[#FF6B35]" />
-                          LYM-TEST-0001
+                          {trackingCode || "Se generará al aprobar"}
                         </div>
                         <div className="mt-4 grid gap-3 text-sm">
                           <div className="flex justify-between">
                             <span className="text-cyan-50/72">Ambiente</span>
-                            <span className="font-bold">Pruebas</span>
+                            <span className="font-bold">Base conectada</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-cyan-50/72">Entrega</span>
@@ -2236,10 +2437,11 @@ export default function Home() {
                     </div>
 
                     <button
-                      onClick={() => setPaymentStep("approved")}
-                      className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#FF6B35] text-sm font-bold text-white transition hover:bg-[#F45F28]"
+                      onClick={createOrderFromCart}
+                      disabled={isCreatingOrder}
+                      className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#FF6B35] text-sm font-bold text-white transition enabled:hover:bg-[#F45F28] disabled:cursor-not-allowed disabled:bg-[#C6D0D6]"
                     >
-                      Simular pago aprobado
+                      {isCreatingOrder ? "Guardando pedido..." : "Aprobar y crear pedido"}
                       <ChevronRight className="size-4" />
                     </button>
                   </div>
@@ -2252,16 +2454,17 @@ export default function Home() {
                     <Check className="size-8" />
                   </div>
                   <h3 className="mt-4 font-display text-3xl font-bold">
-                    Pago aprobado en pruebas
+                    Pedido creado correctamente
                   </h3>
                   <p className="mt-2 text-sm leading-6">
-                    El cliente vería la confirmación, el número de pedido y el
-                    seguimiento de entrega.
+                    El pedido quedó guardado en la base de datos y ya aparece en el administrador.
                   </p>
                   <div className="mt-5 grid gap-3 rounded-lg bg-white p-4 text-left text-sm sm:grid-cols-3">
                     <div>
                       <p className="text-[#617789]">Pedido</p>
-                      <p className="font-bold text-[#0A3D5C]">LYM-TEST-0001</p>
+                      <p className="font-bold text-[#0A3D5C]">
+                        {confirmedOrder?.id || trackingCode}
+                      </p>
                     </div>
                     <div>
                       <p className="text-[#617789]">Total</p>
@@ -2271,7 +2474,9 @@ export default function Home() {
                     </div>
                     <div>
                       <p className="text-[#617789]">Estado</p>
-                      <p className="font-bold text-[#0A3D5C]">Confirmado</p>
+                      <p className="font-bold text-[#0A3D5C]">
+                        {confirmedOrder?.status || "Confirmado"}
+                      </p>
                     </div>
                   </div>
                   <div className="mt-3 rounded-lg bg-white p-4 text-left text-sm">

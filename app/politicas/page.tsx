@@ -24,7 +24,7 @@ const policies = [
   {
     title: "Pagos",
     icon: CreditCard,
-    text: "La tienda está preparada para Wompi. En modo demo no se realizan cobros reales.",
+    text: "La tienda está preparada para Wompi. El cobro real se activa al configurar las llaves de producción.",
   },
   {
     title: "Cambios",
